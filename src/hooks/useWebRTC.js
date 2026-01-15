@@ -242,7 +242,7 @@ export const useWebRTC = (callState, onOffer, onAnswer, onIceCandidate) => {
 
     // Main orchestration: when call is accepted, set up WebRTC
     useEffect(() => {
-        if (!callState?.status === 'accepted') {
+        if (callState?.status !== 'accepted') {
             return;
         }
 
