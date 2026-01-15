@@ -16,6 +16,19 @@ export default function Login({ onLoginSuccess }) {
     setLoading(true);
 
     try {
+      // Validate inputs
+      if (!email || !password) {
+        setError('Please fill in all fields');
+        setLoading(false);
+        return;
+      }
+
+      if (isSignUp && password.length < 6) {
+        setError('Password must be at least 6 characters');
+        setLoading(false);
+        return;
+      }
+
       let userCredential;
       if (isSignUp) {
         userCredential = await createUserWithEmailAndPassword(auth, email, password);
@@ -27,9 +40,28 @@ export default function Login({ onLoginSuccess }) {
       }
 
       const token = await userCredential.user.getIdToken();
+      console.log('✅ Authentication successful for:', userCredential.user.email);
       onLoginSuccess(token, userCredential.user);
     } catch (err) {
-      setError(err.message);
+      console.error('❌ Auth Error:', err.code, err.message);
+      
+      // Better error messages
+      let errorMsg = err.message;
+      if (err.code === 'auth/user-not-found') {
+        errorMsg = 'User not found. Please sign up first.';
+      } else if (err.code === 'auth/wrong-password') {
+        errorMsg = 'Incorrect password. Please try again.';
+      } else if (err.code === 'auth/email-already-in-use') {
+        errorMsg = 'Email already registered. Please sign in.';
+      } else if (err.code === 'auth/weak-password') {
+        errorMsg = 'Password is too weak. Use at least 6 characters.';
+      } else if (err.code === 'auth/invalid-email') {
+        errorMsg = 'Invalid email address.';
+      } else if (err.code === 'auth/operation-not-allowed') {
+        errorMsg = 'Email/password auth is not enabled in Firebase Console.';
+      }
+      
+      setError(errorMsg);
     } finally {
       setLoading(false);
     }
