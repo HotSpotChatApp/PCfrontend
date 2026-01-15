@@ -10,11 +10,14 @@ export const useSocket = () => {
 
     useEffect(() => {
         const socket = getSocket();
-        if (!socket) return;
+        if (!socket) {
+            console.log('❌ Socket not initialized');
+            return;
+        }
 
-        // When user:online is received from server, request the initial data
-        socket.on('user:online', () => {
-            console.log('📨 Received user:online from server, requesting initial data...');
+        // Helper to request all initial data
+        const requestInitialData = () => {
+            console.log('🔄 Requesting initial data from server...');
             
             // Request active users
             socket.emit('get-active-users', (users) => {
@@ -22,6 +25,8 @@ export const useSocket = () => {
                     const filtered = users.filter(u => u && u.userId !== socket.auth?.userId);
                     setActiveUsers(filtered);
                     console.log('✅ Received initial active users list from server:', filtered);
+                } else {
+                    console.log('⚠️ Active users response invalid:', users);
                 }
             });
 
@@ -30,6 +35,8 @@ export const useSocket = () => {
                 if (requests && Array.isArray(requests)) {
                     setIncomingRequests(requests);
                     console.log('✅ Received incoming requests:', requests);
+                } else {
+                    console.log('⚠️ Incoming requests response invalid:', requests);
                 }
             });
 
@@ -38,9 +45,23 @@ export const useSocket = () => {
                 if (requests && Array.isArray(requests)) {
                     setOutgoingRequests(requests);
                     console.log('✅ Received outgoing requests:', requests);
+                } else {
+                    console.log('⚠️ Outgoing requests response invalid:', requests);
                 }
             });
+        };
+
+        // When user:online is received from server, request the initial data
+        socket.on('user:online', () => {
+            console.log('📨 Received user:online from server, requesting initial data...');
+            requestInitialData();
         });
+
+        // Also request data immediately on connection (in case user:online was missed)
+        if (socket.connected) {
+            console.log('✅ Socket already connected, requesting data immediately');
+            requestInitialData();
+        }
 
         // Listen for real-time active users updates
         socket.on('active-users:update', (users) => {
