@@ -30,6 +30,7 @@ export default function Dashboard({ user, onLogout }) {
         localStream,
         remoteStream,
         isCallActive,
+        connectionError,
         localVideoRef,
         remoteVideoRef,
         cleanup: cleanupWebRTC,
@@ -42,6 +43,53 @@ export default function Dashboard({ user, onLogout }) {
     );
 
     const [isUpdating, setIsUpdating] = useState(false);
+
+    // Handle browser close and page unload - end call and go offline
+    useEffect(() => {
+        const handleBeforeUnload = (e) => {
+            if (isUserActive || callState) {
+                // End call
+                if (callState) {
+                    socketEndCall();
+                    cleanupWebRTC();
+                }
+                // Go offline
+                if (isUserActive) {
+                    toggleUserActive(false);
+                }
+
+                // Show confirmation dialog
+                e.preventDefault();
+                e.returnValue = '';
+            }
+        };
+
+        const handleUnload = () => {
+            if (callState) {
+                socketEndCall();
+                cleanupWebRTC();
+            }
+            if (isUserActive) {
+                toggleUserActive(false);
+            }
+        };
+
+        window.addEventListener('beforeunload', handleBeforeUnload);
+        window.addEventListener('unload', handleUnload);
+
+        return () => {
+            window.removeEventListener('beforeunload', handleBeforeUnload);
+            window.removeEventListener('unload', handleUnload);
+        };
+    }, [callState, isUserActive, isCallActive]);
+
+    // Monitor connection errors
+    useEffect(() => {
+        if (connectionError) {
+            console.error('🚨 Connection error detected:', connectionError);
+            // Could show error toast/notification here
+        }
+    }, [connectionError]);
 
     const handleCallRequest = (targetUser) => {
         setIsUpdating(true);
@@ -62,8 +110,12 @@ export default function Dashboard({ user, onLogout }) {
     };
 
     const handleEndCall = () => {
-        socketEndCall();
-        cleanupWebRTC();
+        try {
+            socketEndCall();
+            cleanupWebRTC();
+        } catch (error) {
+            console.error('Error ending call:', error);
+        }
     };
 
     return (
@@ -82,6 +134,13 @@ export default function Dashboard({ user, onLogout }) {
                         Logout
                     </button>
                 </div>
+
+                {/* Error Display */}
+                {connectionError && (
+                    <div className="mb-4 p-4 bg-red-900/50 border border-red-500 rounded-lg">
+                        <p className="text-red-200">Connection Error: {connectionError}</p>
+                    </div>
+                )}
 
                 {/* Active Status Toggle */}
                 <ActiveToggle

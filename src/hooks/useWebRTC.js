@@ -5,10 +5,16 @@ const STUN_SERVERS = [
     'stun:stun1.l.google.com:19302'
 ];
 
+const SETUP_TIMEOUT = 30000; // 30 seconds for WebRTC setup
+const SIGNAL_TIMEOUT = 10000; // 10 seconds for signal operations
+const MAX_RETRIES = 3;
+const RETRY_DELAY = [1000, 2000, 4000]; // Exponential backoff in ms
+
 export const useWebRTC = (callState, onOffer, onAnswer, onIceCandidate) => {
     const [localStream, setLocalStream] = useState(null);
     const [remoteStream, setRemoteStream] = useState(null);
     const [isCallActive, setIsCallActive] = useState(false);
+    const [connectionError, setConnectionError] = useState(null);
 
     const peerConnectionRef = useRef(null);
     const localVideoRef = useRef(null);
@@ -16,12 +22,15 @@ export const useWebRTC = (callState, onOffer, onAnswer, onIceCandidate) => {
     const mediaStartedRef = useRef(false);
     const peerConnectionInitializedRef = useRef(false);
     const remoteStreamSetRef = useRef(false);
+    const setupTimeoutRef = useRef(null);
+    const retryCountRef = useRef(0);
+    const setupAbortedRef = useRef(false);
 
-    // Initialize media streams
+    // Initialize media streams with better error handling
     const startMedia = async () => {
         if (mediaStartedRef.current) {
             console.log('📹 Media already started, skipping');
-            return;
+            return localStream;
         }
 
         try {
@@ -33,13 +42,20 @@ export const useWebRTC = (callState, onOffer, onAnswer, onIceCandidate) => {
             setLocalStream(stream);
             if (localVideoRef.current) {
                 localVideoRef.current.srcObject = stream;
+                localVideoRef.current.play().catch(e => console.error('Error playing local video:', e));
             }
             mediaStartedRef.current = true;
             console.log('✅ Media stream started successfully');
             return stream;
         } catch (error) {
             console.error('❌ Error accessing media devices:', error);
-            throw error;
+            const errorMsg = error.name === 'NotAllowedError'
+                ? 'Camera/Microphone permission denied'
+                : error.name === 'NotFoundError'
+                    ? 'Camera/Microphone not found'
+                    : error.message;
+            setConnectionError(errorMsg);
+            throw new Error(`Media access failed: ${errorMsg}`);
         }
     };
 
@@ -56,7 +72,7 @@ export const useWebRTC = (callState, onOffer, onAnswer, onIceCandidate) => {
         mediaStartedRef.current = false;
     };
 
-    // Create peer connection with local stream
+    // Create peer connection with local stream and better error handling
     const createPeerConnection = async (localStreamParam) => {
         if (peerConnectionInitializedRef.current) {
             console.log('🔧 Peer connection already initialized, reusing');
@@ -77,7 +93,8 @@ export const useWebRTC = (callState, onOffer, onAnswer, onIceCandidate) => {
                 peerConnection.addTrack(track, streamToUse);
             });
         } else {
-            console.warn('⚠️ No local stream available, will retry when stream is ready');
+            console.error('❌ No local stream available for peer connection!');
+            throw new Error('No local stream available');
         }
 
         // Handle remote tracks
@@ -111,6 +128,8 @@ export const useWebRTC = (callState, onOffer, onAnswer, onIceCandidate) => {
                 } else {
                     console.error('❌ Remote video ref not available!');
                 }
+            } else {
+                console.error('❌ No streams in ontrack event');
             }
         };
 
@@ -119,6 +138,8 @@ export const useWebRTC = (callState, onOffer, onAnswer, onIceCandidate) => {
             if (event.candidate) {
                 console.log('❄️ Generated ICE candidate');
                 onIceCandidate(event.candidate);
+            } else {
+                console.log('❄️ ICE gathering completed');
             }
         };
 
@@ -126,19 +147,28 @@ export const useWebRTC = (callState, onOffer, onAnswer, onIceCandidate) => {
         peerConnection.onconnectionstatechange = () => {
             console.log('🔄 Peer connection state:', peerConnection.connectionState);
             if (peerConnection.connectionState === 'failed') {
-                console.error('❌ Connection FAILED, cleaning up');
-                cleanup();
+                console.error('❌ Connection FAILED');
+                setConnectionError('Connection failed');
             } else if (peerConnection.connectionState === 'connected') {
                 console.log('✅ Peer connection ESTABLISHED and CONNECTED');
+                setConnectionError(null);
             } else if (peerConnection.connectionState === 'connecting') {
                 console.log('🔄 Peer connection CONNECTING...');
             } else if (peerConnection.connectionState === 'disconnected') {
-                console.warn('⚠️ Connection temporarily disconnected, will attempt reconnection');
+                console.warn('⚠️ Connection temporarily disconnected');
             }
         };
 
         peerConnection.oniceconnectionstatechange = () => {
             console.log('❄️ ICE connection state:', peerConnection.iceConnectionState);
+            if (peerConnection.iceConnectionState === 'failed') {
+                console.error('❌ ICE connection failed');
+                setConnectionError('ICE connection failed');
+            }
+        };
+
+        peerConnection.onicegatheringstatechange = () => {
+            console.log('❄️ ICE gathering state:', peerConnection.iceGatheringState);
         };
 
         peerConnectionRef.current = peerConnection;
@@ -147,59 +177,94 @@ export const useWebRTC = (callState, onOffer, onAnswer, onIceCandidate) => {
         return peerConnection;
     };
 
-    // Create and send offer
+    // Create and send offer with timeout
     const createOffer = async (stream) => {
         console.log('📤 createOffer called');
         if (!peerConnectionRef.current) {
             console.error('❌ No peer connection available!');
-            return;
+            throw new Error('No peer connection available');
         }
 
         try {
             console.log('   Creating offer...');
-            const offer = await peerConnectionRef.current.createOffer();
+            const offerPromise = peerConnectionRef.current.createOffer();
+            const offer = await Promise.race([
+                offerPromise,
+                new Promise((_, reject) =>
+                    setTimeout(() => reject(new Error('Offer creation timeout')), SIGNAL_TIMEOUT)
+                )
+            ]);
             console.log('✅ Offer created');
+
             console.log('   Setting offer as local description...');
-            await peerConnectionRef.current.setLocalDescription(offer);
+            const setDescPromise = peerConnectionRef.current.setLocalDescription(offer);
+            await Promise.race([
+                setDescPromise,
+                new Promise((_, reject) =>
+                    setTimeout(() => reject(new Error('Set local description timeout')), SIGNAL_TIMEOUT)
+                )
+            ]);
             console.log('✅ Offer set as local description');
             console.log('📤 Emitting offer to remote peer');
             onOffer(offer);
         } catch (error) {
             console.error('❌ Error creating offer:', error);
+            setConnectionError(`Failed to create offer: ${error.message}`);
+            throw error;
         }
     };
 
-    // Create and send answer
+    // Create and send answer with timeout
     const createAnswer = async (offer) => {
         console.log('📥 createAnswer called');
         if (!peerConnectionRef.current) {
             console.error('❌ No peer connection available!');
-            return;
+            throw new Error('No peer connection available');
         }
 
         try {
             console.log('   Setting offer as remote description...');
-            await peerConnectionRef.current.setRemoteDescription(
+            const setRemotePromise = peerConnectionRef.current.setRemoteDescription(
                 new RTCSessionDescription(offer)
             );
+            await Promise.race([
+                setRemotePromise,
+                new Promise((_, reject) =>
+                    setTimeout(() => reject(new Error('Set remote description timeout')), SIGNAL_TIMEOUT)
+                )
+            ]);
             console.log('✅ Offer set as remote description');
 
             console.log('   Creating answer...');
-            const answer = await peerConnectionRef.current.createAnswer();
+            const answerPromise = peerConnectionRef.current.createAnswer();
+            const answer = await Promise.race([
+                answerPromise,
+                new Promise((_, reject) =>
+                    setTimeout(() => reject(new Error('Answer creation timeout')), SIGNAL_TIMEOUT)
+                )
+            ]);
             console.log('✅ Answer created');
 
             console.log('   Setting answer as local description...');
-            await peerConnectionRef.current.setLocalDescription(answer);
+            const setLocalPromise = peerConnectionRef.current.setLocalDescription(answer);
+            await Promise.race([
+                setLocalPromise,
+                new Promise((_, reject) =>
+                    setTimeout(() => reject(new Error('Set local description timeout')), SIGNAL_TIMEOUT)
+                )
+            ]);
             console.log('✅ Answer set as local description');
 
             console.log('📤 Emitting answer to remote peer');
             onAnswer(answer);
         } catch (error) {
             console.error('❌ Error creating answer:', error);
+            setConnectionError(`Failed to create answer: ${error.message}`);
+            throw error;
         }
     };
 
-    // Handle incoming answer
+    // Handle incoming answer with timeout
     const handleAnswer = async (answer) => {
         console.log('📥 handleAnswer called');
         if (!peerConnectionRef.current) {
@@ -209,16 +274,23 @@ export const useWebRTC = (callState, onOffer, onAnswer, onIceCandidate) => {
 
         try {
             console.log('   Setting answer as remote description...');
-            await peerConnectionRef.current.setRemoteDescription(
+            const setRemotePromise = peerConnectionRef.current.setRemoteDescription(
                 new RTCSessionDescription(answer)
             );
+            await Promise.race([
+                setRemotePromise,
+                new Promise((_, reject) =>
+                    setTimeout(() => reject(new Error('Set remote description timeout')), SIGNAL_TIMEOUT)
+                )
+            ]);
             console.log('✅ Answer set as remote description');
         } catch (error) {
             console.error('❌ Error handling answer:', error);
+            setConnectionError(`Failed to handle answer: ${error.message}`);
         }
     };
 
-    // Add ICE candidate
+    // Add ICE candidate with timeout and error handling
     const addIceCandidate = async (candidate) => {
         if (!peerConnectionRef.current) {
             console.warn('⚠️ Peer connection not ready for ICE candidate');
@@ -231,28 +303,57 @@ export const useWebRTC = (callState, onOffer, onAnswer, onIceCandidate) => {
 
         try {
             console.log('❄️ Adding ICE candidate');
-            await peerConnectionRef.current.addIceCandidate(new RTCIceCandidate(candidate));
+            const addPromise = peerConnectionRef.current.addIceCandidate(new RTCIceCandidate(candidate));
+            await Promise.race([
+                addPromise,
+                new Promise((_, reject) =>
+                    setTimeout(() => reject(new Error('Add ICE candidate timeout')), SIGNAL_TIMEOUT)
+                )
+            ]);
             console.log('✅ ICE candidate added');
         } catch (error) {
-            console.error('❌ Error adding ICE candidate:', error);
+            // Some ICE candidates might fail, but that's often okay
+            console.warn('⚠️ Error adding ICE candidate (may be normal):', error.message);
         }
+    };
+
+    // Reset refs after cleanup
+    const resetRefs = () => {
+        mediaStartedRef.current = false;
+        peerConnectionInitializedRef.current = false;
+        remoteStreamSetRef.current = false;
+        retryCountRef.current = 0;
+        setupAbortedRef.current = false;
     };
 
     // Cleanup
     const cleanup = () => {
         console.log('🧹 Cleaning up WebRTC resources');
+
+        // Clear timeout
+        if (setupTimeoutRef.current) {
+            clearTimeout(setupTimeoutRef.current);
+            setupTimeoutRef.current = null;
+        }
+
+        // Close peer connection
         if (peerConnectionRef.current) {
             peerConnectionRef.current.close();
             peerConnectionRef.current = null;
-            peerConnectionInitializedRef.current = false;
         }
-        remoteStreamSetRef.current = false;
+
+        // Stop media
         stopMedia();
+
+        // Reset refs
+        resetRefs();
+
         setIsCallActive(false);
+        setConnectionError(null);
         console.log('✅ Cleanup complete');
     };
 
-    // Main orchestration: when call is accepted, set up WebRTC
+    // Main orchestration: when call is accepted, set up WebRTC with retry logic
     useEffect(() => {
         if (callState?.status !== 'accepted') {
             return;
@@ -264,30 +365,73 @@ export const useWebRTC = (callState, onOffer, onAnswer, onIceCandidate) => {
         console.log('========================================\n');
 
         let isMounted = true;
+        setupAbortedRef.current = false;
 
-        const setupWebRTC = async () => {
+        const setupWebRTC = async (attemptNumber = 1) => {
             try {
-                // Step 1: Start media
-                console.log('\n[STEP 1] Starting media...');
-                const stream = await startMedia();
-                if (!isMounted) return;
+                console.log(`\n🔄 WebRTC Setup Attempt ${attemptNumber}/${MAX_RETRIES}`);
 
-                // Step 2: Create peer connection
-                console.log('\n[STEP 2] Creating peer connection...');
-                await createPeerConnection(stream);
-                if (!isMounted) return;
+                // Set timeout for entire setup
+                const setupTimeout = new Promise((_, reject) => {
+                    setupTimeoutRef.current = setTimeout(() => {
+                        reject(new Error('WebRTC setup timeout'));
+                    }, SETUP_TIMEOUT);
+                });
 
-                setIsCallActive(true);
+                const setupPromise = (async () => {
+                    // Step 1: Start media
+                    if (!isMounted || setupAbortedRef.current) return;
+                    console.log('\n[STEP 1] Starting media...');
+                    const stream = await startMedia();
 
-                // Step 3: If initiator, create and send offer
-                if (callState.initiator) {
-                    console.log('\n[STEP 3] Creating offer (initiator mode)...');
-                    await createOffer(stream);
-                } else {
-                    console.log('\n[STEP 3] Waiting for offer (receiver mode)...');
-                }
+                    if (!isMounted || setupAbortedRef.current) return;
+
+                    // Step 2: Create peer connection
+                    console.log('\n[STEP 2] Creating peer connection...');
+                    await createPeerConnection(stream);
+
+                    if (!isMounted || setupAbortedRef.current) return;
+
+                    setIsCallActive(true);
+
+                    // Step 3: If initiator, create and send offer
+                    if (callState.initiator) {
+                        console.log('\n[STEP 3] Creating offer (initiator mode)...');
+                        await createOffer(stream);
+                    } else {
+                        console.log('\n[STEP 3] Waiting for offer (receiver mode)...');
+                    }
+
+                    console.log('\n✅ WebRTC setup completed successfully');
+                })();
+
+                await Promise.race([setupPromise, setupTimeout]);
+
             } catch (error) {
-                console.error('❌ Error during WebRTC setup:', error);
+                if (setupTimeoutRef.current) {
+                    clearTimeout(setupTimeoutRef.current);
+                    setupTimeoutRef.current = null;
+                }
+
+                console.error(`❌ WebRTC setup attempt ${attemptNumber} failed:`, error.message);
+                setConnectionError(`Connection failed: ${error.message}`);
+
+                // If we haven't exceeded max retries and mount is still active, retry
+                if (attemptNumber < MAX_RETRIES && isMounted && !setupAbortedRef.current) {
+                    const delay = RETRY_DELAY[attemptNumber - 1] || RETRY_DELAY[RETRY_DELAY.length - 1];
+                    console.log(`⏳ Retrying in ${delay}ms...`);
+
+                    setTimeout(() => {
+                        if (isMounted && !setupAbortedRef.current) {
+                            // Clean up before retry
+                            resetRefs();
+                            setupWebRTC(attemptNumber + 1);
+                        }
+                    }, delay);
+                } else if (attemptNumber >= MAX_RETRIES) {
+                    console.error('❌ Max retries exceeded, WebRTC setup failed');
+                    setConnectionError('Failed to establish connection after multiple attempts');
+                }
             }
         };
 
@@ -295,6 +439,11 @@ export const useWebRTC = (callState, onOffer, onAnswer, onIceCandidate) => {
 
         return () => {
             isMounted = false;
+            setupAbortedRef.current = true;
+            if (setupTimeoutRef.current) {
+                clearTimeout(setupTimeoutRef.current);
+                setupTimeoutRef.current = null;
+            }
         };
     }, [callState?.status, callState?.initiator]);
 
@@ -341,6 +490,7 @@ export const useWebRTC = (callState, onOffer, onAnswer, onIceCandidate) => {
         localStream,
         remoteStream,
         isCallActive,
+        connectionError,
         localVideoRef,
         remoteVideoRef,
         startMedia,
@@ -349,6 +499,7 @@ export const useWebRTC = (callState, onOffer, onAnswer, onIceCandidate) => {
         createOffer,
         createAnswer,
         handleAnswer,
-        addIceCandidate
+        addIceCandidate,
+        resetRefs
     };
 };

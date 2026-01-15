@@ -146,19 +146,23 @@ export const useSocket = () => {
         socket.on('call:accept', handleCallAccept);
 
         const handleCallEnd = () => {
+            console.log('📵 Call ended from server');
             setCallState(null);
             setIncomingRequests([]);
             setOutgoingRequests([]);
-            console.log('📵 Call ended');
 
-            // Refresh active users after call ends
-            socket.emit('get-active-users', (users) => {
-                if (users && Array.isArray(users)) {
-                    const filtered = users.filter(u => u && u.userId !== socket.auth?.userId);
-                    setActiveUsers(filtered);
-                    console.log('✅ Active users refreshed after call:', filtered.length, 'users');
-                }
-            });
+            // Always request fresh active users after call ends
+            setTimeout(() => {
+                console.log('🔄 Requesting active users after call end...');
+                socket.emit('get-active-users', (users) => {
+                    if (users && Array.isArray(users)) {
+                        const filtered = users.filter(u => u && u.userId !== socket.auth?.userId);
+                        setActiveUsers(filtered);
+                        console.log('✅ Active users refreshed after call:', filtered.length, 'users');
+                        filtered.forEach(u => console.log(`  - ${u.displayName} (${u.userId})`));
+                    }
+                });
+            }, 500); // Small delay to ensure backend state is updated
         };
 
         socket.on('call:end', handleCallEnd);
@@ -233,7 +237,25 @@ export const useSocket = () => {
 
     const endCall = () => {
         const socket = getSocket();
-        socket.emit('call:end', { callId: callState?.callId });
+        if (!socket) {
+            console.error('❌ Socket not available');
+            return;
+        }
+
+        if (!callState?.callId) {
+            console.warn('⚠️ No active call to end');
+            return;
+        }
+
+        console.log('📞 Ending call:', callState.callId);
+        socket.emit('call:end', { callId: callState.callId }, (error) => {
+            if (error) {
+                console.error('❌ Error ending call:', error);
+                setError(error);
+            } else {
+                console.log('✅ Call end signal sent');
+            }
+        });
     };
 
     const sendOffer = (offer) => {
@@ -265,6 +287,15 @@ export const useSocket = () => {
         setIsUserActive(active);
         socket.emit('user:set-active', active);
         console.log(`🔴 User toggled active: ${active}`);
+
+        // If toggling to offline and there's an active call, end it
+        if (!active && callState) {
+            console.log('📵 User went offline, ending active call');
+            endCall();
+            setCallState(null);
+            setIncomingRequests([]);
+            setOutgoingRequests([]);
+        }
     };
 
     return {
