@@ -22,14 +22,14 @@ export default function ActiveUsers({ users, onCall, disabled, currentUserId }) 
                             users.map(user => {
                                 // Skip self
                                 if (!user || !user.userId || user.userId === currentUserId) return null;
-                                
+
                                 return (
                                     <tr key={user.userId} className="border-t border-slate-700 hover:bg-slate-800 transition">
                                         <td className="px-3 py-2 font-medium text-white">{user.displayName || 'Unknown'}</td>
                                         <td className="px-3 py-2">
                                             <span className={`inline-block px-2 py-1 rounded text-xs font-semibold ${(user.status || 'idle') === 'idle'
-                                                    ? 'bg-green-900 text-green-200'
-                                                    : 'bg-yellow-900 text-yellow-200'
+                                                ? 'bg-green-900 text-green-200'
+                                                : 'bg-yellow-900 text-yellow-200'
                                                 }`}>
                                                 {user.status || 'idle'}
                                             </span>
