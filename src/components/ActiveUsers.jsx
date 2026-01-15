@@ -19,28 +19,31 @@ export default function ActiveUsers({ users, onCall, disabled }) {
                                 </td>
                             </tr>
                         ) : (
-                            users.map(user => (
+                            users.map(user => {
+                                if (!user || !user.userId) return null;
+                                return (
                                 <tr key={user.userId} className="border-t border-slate-700 hover:bg-slate-800">
-                                    <td className="px-3 py-2">{user.displayName}</td>
+                                    <td className="px-3 py-2">{user.displayName || 'Unknown'}</td>
                                     <td className="px-3 py-2">
-                                        <span className={`inline-block px-2 py-1 rounded text-xs ${user.status === 'idle'
+                                        <span className={`inline-block px-2 py-1 rounded text-xs ${(user.status || 'idle') === 'idle'
                                                 ? 'bg-green-900 text-green-200'
                                                 : 'bg-yellow-900 text-yellow-200'
                                             }`}>
-                                            {user.status}
+                                            {user.status || 'idle'}
                                         </span>
                                     </td>
                                     <td className="px-3 py-2 text-center">
                                         <button
                                             onClick={() => onCall(user)}
-                                            disabled={disabled || user.status !== 'idle'}
+                                            disabled={disabled || (user.status || 'idle') !== 'idle'}
                                             className="px-3 py-1 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-600 rounded text-xs font-medium transition"
                                         >
                                             Call
                                         </button>
                                     </td>
                                 </tr>
-                            ))
+                            );
+                            })
                         )}
                     </tbody>
                 </table>

@@ -12,9 +12,22 @@ export const useSocket = () => {
         const socket = getSocket();
         if (!socket) return;
 
+        // Request initial active users list
+        socket.emit('get-active-users', (users) => {
+            if (users && Array.isArray(users)) {
+                const filtered = users.filter(u => u && u.userId !== socket.auth?.userId);
+                setActiveUsers(filtered);
+                console.log('✅ Received initial active users:', filtered);
+            }
+        });
+
         // Presence Events
         socket.on('active-users:update', (users) => {
-            setActiveUsers(users.filter(u => u.userId !== socket.auth.userId));
+            if (users && Array.isArray(users)) {
+                const filtered = users.filter(u => u && u.userId !== socket.auth?.userId);
+                setActiveUsers(filtered);
+                console.log('📡 Active users updated:', filtered);
+            }
         });
 
         socket.on('user:online', (user) => {

@@ -18,9 +18,11 @@ export default function IncomingRequests({ requests, onAccept, onReject }) {
                                 </td>
                             </tr>
                         ) : (
-                            requests.map(request => (
+                            requests.map(request => {
+                                if (!request || !request.userId) return null;
+                                return (
                                 <tr key={request.userId} className="border-t border-slate-700 hover:bg-slate-800">
-                                    <td className="px-3 py-2">{request.displayName}</td>
+                                    <td className="px-3 py-2">{request.displayName || 'Unknown'}</td>
                                     <td className="px-3 py-2 flex justify-center gap-2">
                                         <button
                                             onClick={() => onAccept(request.userId)}
@@ -36,7 +38,8 @@ export default function IncomingRequests({ requests, onAccept, onReject }) {
                                         </button>
                                     </td>
                                 </tr>
-                            ))
+                            );
+                            })
                         )}
                     </tbody>
                 </table>
