@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 
 const STUN_SERVERS = [
     'stun:stun.l.google.com:19302',
@@ -102,6 +102,13 @@ export const useWebRTC = (callState, onOffer, onAnswer, onIceCandidate) => {
     // Create and send offer
     const createOffer = async () => {
         console.log('📤 createOffer called');
+        
+        // Ensure media is started first
+        if (!localStream) {
+            console.log('   ⏳ Starting media first (not started yet)');
+            await startMedia();
+        }
+        
         if (!peerConnectionRef.current) {
             console.log('   Creating peer connection first');
             peerConnectionRef.current = await createPeerConnection();
@@ -120,6 +127,13 @@ export const useWebRTC = (callState, onOffer, onAnswer, onIceCandidate) => {
     // Create and send answer
     const createAnswer = async (offer) => {
         console.log('📥 createAnswer called');
+        
+        // Ensure media is started first
+        if (!localStream) {
+            console.log('   ⏳ Starting media first (not started yet)');
+            await startMedia();
+        }
+        
         if (!peerConnectionRef.current) {
             console.log('   Creating peer connection first');
             peerConnectionRef.current = await createPeerConnection();
@@ -180,15 +194,24 @@ export const useWebRTC = (callState, onOffer, onAnswer, onIceCandidate) => {
         if (callState?.status === 'accepted') {
             console.log('📞 Call accepted, starting media for', callState.initiator ? 'initiator' : 'receiver');
             startMedia().then(() => {
-                console.log('✅ Media started, creating peer connection');
-                if (callState.initiator) {
-                    console.log('📤 Creating offer (initiator)');
-                    createOffer();
+                console.log('✅ Media started');
+                // Create peer connection if not exists
+                if (!peerConnectionRef.current) {
+                    console.log('Creating peer connection...');
+                    createPeerConnection().then(() => {
+                        // For initiator only - create offer
+                        if (callState.initiator) {
+                            console.log('📤 Creating offer (initiator)');
+                            createOffer();
+                        } else {
+                            console.log('⏳ Waiting for offer (receiver)');
+                        }
+                    });
                 } else {
-                    console.log('⏳ Waiting for offer (receiver)');
-                    // Create peer connection without offer, wait for incoming offer
-                    if (!peerConnectionRef.current) {
-                        createPeerConnection();
+                    // Peer connection already exists, just create offer if initiator
+                    if (callState.initiator) {
+                        console.log('📤 Creating offer (initiator, peer connection already exists)');
+                        createOffer();
                     }
                 }
             }).catch(error => {
