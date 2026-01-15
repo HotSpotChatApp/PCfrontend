@@ -4,6 +4,7 @@ import ActiveUsers from '../components/ActiveUsers';
 import IncomingRequests from '../components/IncomingRequests';
 import OutgoingRequests from '../components/OutgoingRequests';
 import CallControls from '../components/CallControls';
+import ActiveToggle from '../components/ActiveToggle';
 import { useSocket } from '../hooks/useSocket';
 import { useWebRTC } from '../hooks/useWebRTC';
 import { getSocket } from '../services/socket';
@@ -14,13 +15,15 @@ export default function Dashboard({ user, onLogout }) {
         incomingRequests,
         outgoingRequests,
         callState,
+        isUserActive,
         sendCallRequest,
         acceptCall,
         rejectCall,
         endCall: socketEndCall,
         sendOffer,
         sendAnswer,
-        sendIceCandidate
+        sendIceCandidate,
+        toggleUserActive
     } = useSocket();
 
     const {
@@ -80,6 +83,12 @@ export default function Dashboard({ user, onLogout }) {
                     </button>
                 </div>
 
+                {/* Active Status Toggle */}
+                <ActiveToggle
+                    isActive={isUserActive}
+                    onToggle={toggleUserActive}
+                    userDisplayName={user?.displayName || user?.email}
+                />
                 {/* Video Panel */}
                 <VideoPanel
                     localVideoRef={localVideoRef}

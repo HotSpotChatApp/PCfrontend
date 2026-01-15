@@ -6,6 +6,7 @@ export const useSocket = () => {
     const [incomingRequests, setIncomingRequests] = useState([]);
     const [outgoingRequests, setOutgoingRequests] = useState([]);
     const [callState, setCallState] = useState(null);
+    const [isUserActive, setIsUserActive] = useState(false);
     const [error, setError] = useState(null);
 
     useEffect(() => {
@@ -18,7 +19,7 @@ export const useSocket = () => {
         // Helper to request all initial data
         const requestInitialData = () => {
             console.log('🔄 Requesting initial data from server...');
-            
+
             // Request active users
             socket.emit('get-active-users', (users) => {
                 if (users && Array.isArray(users)) {
@@ -149,7 +150,7 @@ export const useSocket = () => {
             setIncomingRequests([]);
             setOutgoingRequests([]);
             console.log('📵 Call ended');
-            
+
             // Refresh active users after call ends
             socket.emit('get-active-users', (users) => {
                 if (users && Array.isArray(users)) {
@@ -211,7 +212,7 @@ export const useSocket = () => {
     const sendCallRequest = (targetUserId) => {
         const socket = getSocket();
         const targetUser = activeUsers.find(u => u.userId === targetUserId);
-        socket.emit('call:request', { 
+        socket.emit('call:request', {
             targetUserId,
             targetDisplayName: targetUser?.displayName || 'Unknown'
         });
@@ -259,11 +260,19 @@ export const useSocket = () => {
         });
     };
 
+    const toggleUserActive = (active) => {
+        const socket = getSocket();
+        setIsUserActive(active);
+        socket.emit('user:set-active', active);
+        console.log(`🔴 User toggled active: ${active}`);
+    };
+
     return {
         activeUsers,
         incomingRequests,
         outgoingRequests,
         callState,
+        isUserActive,
         error,
         sendCallRequest,
         acceptCall,
@@ -271,6 +280,7 @@ export const useSocket = () => {
         endCall,
         sendOffer,
         sendAnswer,
-        sendIceCandidate
+        sendIceCandidate,
+        toggleUserActive
     };
 };
