@@ -1,7 +1,7 @@
-export default function ActiveUsers({ users, onCall, disabled }) {
+export default function ActiveUsers({ users, onCall, disabled, currentUserId }) {
     return (
         <div className="flex-1 min-w-0">
-            <h3 className="text-lg font-semibold mb-3 text-white">Active Users ({users.length})</h3>
+            <h3 className="text-lg font-semibold mb-3 text-white">Active Users ({users.filter(u => u.userId !== currentUserId).length})</h3>
             <div className="overflow-y-auto max-h-96">
                 <table className="w-full text-sm">
                     <thead className="bg-slate-700 sticky top-0">
@@ -12,24 +12,25 @@ export default function ActiveUsers({ users, onCall, disabled }) {
                         </tr>
                     </thead>
                     <tbody>
-                        {users.length === 0 ? (
+                        {users.filter(u => u.userId !== currentUserId).length === 0 ? (
                             <tr>
                                 <td colSpan="3" className="text-center py-4 text-gray-400">
-                                    No users online
+                                    No other users online
                                 </td>
                             </tr>
                         ) : (
                             users.map(user => {
-                                if (!user || !user.userId) return null;
+                                // Skip self
+                                if (!user || !user.userId || user.userId === currentUserId) return null;
+                                
                                 return (
                                     <tr key={user.userId} className="border-t border-slate-700 hover:bg-slate-800 transition">
                                         <td className="px-3 py-2 font-medium text-white">{user.displayName || 'Unknown'}</td>
                                         <td className="px-3 py-2">
-                                            <span className={`inline-block px-2 py-1 rounded text-xs font-semibold ${
-                                                (user.status || 'idle') === 'idle'
+                                            <span className={`inline-block px-2 py-1 rounded text-xs font-semibold ${(user.status || 'idle') === 'idle'
                                                     ? 'bg-green-900 text-green-200'
                                                     : 'bg-yellow-900 text-yellow-200'
-                                            }`}>
+                                                }`}>
                                                 {user.status || 'idle'}
                                             </span>
                                         </td>

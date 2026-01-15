@@ -11,11 +11,10 @@ export default function ActiveToggle({ isActive, onToggle, userDisplayName }) {
                 </div>
                 <button
                     onClick={() => onToggle(!isActive)}
-                    className={`px-6 py-2 rounded-lg font-semibold transition-all ${
-                        isActive
+                    className={`px-6 py-2 rounded-lg font-semibold transition-all ${isActive
                             ? 'bg-green-600 hover:bg-green-700 text-white'
                             : 'bg-gray-600 hover:bg-gray-700 text-white'
-                    }`}
+                        }`}
                 >
                     {isActive ? '🟢 Go Offline' : '⚪ Go Active'}
                 </button>

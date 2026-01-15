@@ -103,6 +103,7 @@ export default function Dashboard({ user, onLogout }) {
                         users={activeUsers}
                         onCall={handleCallRequest}
                         disabled={isCallActive}
+                        currentUserId={user?.userId}
                     />
                     <IncomingRequests
                         requests={incomingRequests}

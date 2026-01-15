@@ -6,31 +6,26 @@ export default function VideoPanel({ localVideoRef, remoteVideoRef, remoteStream
                 <video
                     ref={localVideoRef}
                     autoPlay
-                    muted
+                    muted={true}
                     playsInline
-                    className="w-full h-full"
+                    className="w-full h-full object-cover"
                 />
-                <div className="absolute bottom-2 left-2 text-xs bg-black bg-opacity-50 px-2 py-1 rounded">
-                    You
+                <div className="absolute bottom-2 left-2 text-xs bg-black bg-opacity-50 px-2 py-1 rounded text-white">
+                    You (Local)
                 </div>
             </div>
 
             {/* Remote Video */}
             <div className="relative rounded-lg overflow-hidden bg-slate-800 border border-slate-700">
-                {remoteStream ? (
-                    <>
-                        <video
-                            ref={remoteVideoRef}
-                            autoPlay
-                            playsInline
-                            className="w-full h-full"
-                        />
-                        <div className="absolute bottom-2 left-2 text-xs bg-black bg-opacity-50 px-2 py-1 rounded">
-                            {callState?.calleeName || 'Remote User'}
-                        </div>
-                    </>
-                ) : (
-                    <div className="flex items-center justify-center h-full">
+                <video
+                    ref={remoteVideoRef}
+                    autoPlay={true}
+                    muted={false}
+                    playsInline
+                    className="w-full h-full object-cover"
+                />
+                {!remoteStream && (
+                    <div className="absolute inset-0 flex items-center justify-center bg-slate-900 bg-opacity-70">
                         <div className="text-center">
                             <p className="text-gray-400">
                                 {callState ? 'Waiting for remote stream...' : 'No active call'}
@@ -38,6 +33,9 @@ export default function VideoPanel({ localVideoRef, remoteVideoRef, remoteStream
                         </div>
                     </div>
                 )}
+                <div className="absolute bottom-2 left-2 text-xs bg-black bg-opacity-50 px-2 py-1 rounded text-white">
+                    {callState?.calleeName || 'Remote User'}
+                </div>
             </div>
         </div>
     );
