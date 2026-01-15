@@ -12,26 +12,25 @@ export const useSocket = () => {
         const socket = getSocket();
         if (!socket) return;
 
-        // Request initial active users list
-        socket.emit('get-active-users', (users) => {
-            if (users && Array.isArray(users)) {
-                const filtered = users.filter(u => u && u.userId !== socket.auth?.userId);
-                setActiveUsers(filtered);
-                console.log('✅ Received initial active users:', filtered);
-            }
+        // When user:online is received from server, request the initial active users list
+        socket.on('user:online', () => {
+            console.log('📨 Received user:online from server, requesting active users list...');
+            socket.emit('get-active-users', (users) => {
+                if (users && Array.isArray(users)) {
+                    const filtered = users.filter(u => u && u.userId !== socket.auth?.userId);
+                    setActiveUsers(filtered);
+                    console.log('✅ Received initial active users list from server:', filtered);
+                }
+            });
         });
 
-        // Presence Events
+        // Listen for real-time active users updates
         socket.on('active-users:update', (users) => {
             if (users && Array.isArray(users)) {
                 const filtered = users.filter(u => u && u.userId !== socket.auth?.userId);
                 setActiveUsers(filtered);
-                console.log('📡 Active users updated:', filtered);
+                console.log('📡 Real-time active users update received:', filtered);
             }
-        });
-
-        socket.on('user:online', (user) => {
-            setActiveUsers(prev => [...prev, user]);
         });
 
         socket.on('user:offline', (userId) => {
