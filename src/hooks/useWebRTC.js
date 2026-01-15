@@ -15,6 +15,7 @@ export const useWebRTC = (callState, onOffer, onAnswer, onIceCandidate) => {
     const remoteVideoRef = useRef(null);
     const mediaStartedRef = useRef(false);
     const peerConnectionInitializedRef = useRef(false);
+    const remoteStreamSetRef = useRef(false);
 
     // Initialize media streams
     const startMedia = async () => {
@@ -22,7 +23,7 @@ export const useWebRTC = (callState, onOffer, onAnswer, onIceCandidate) => {
             console.log('📹 Media already started, skipping');
             return;
         }
-        
+
         try {
             console.log('📹 Starting media stream...');
             const stream = await navigator.mediaDevices.getUserMedia({
@@ -84,24 +85,29 @@ export const useWebRTC = (callState, onOffer, onAnswer, onIceCandidate) => {
             console.log('🎬 ===== ONTRACK EVENT FIRED! =====');
             console.log('   Streams:', event.streams.length);
             console.log('   Track kind:', event.track.kind);
-            
+
             if (event.streams && event.streams[0]) {
                 const remoteStreamData = event.streams[0];
                 console.log('✅ Received remote stream:', remoteStreamData.id);
                 console.log('   Tracks in stream:', remoteStreamData.getTracks().length);
-                
+
                 setRemoteStream(remoteStreamData);
-                
-                // Attach to video element
-                if (remoteVideoRef.current) {
+
+                // Attach to video element ONLY once per stream
+                if (remoteVideoRef.current && !remoteStreamSetRef.current) {
                     console.log('📺 Attaching remote stream to video element');
                     remoteVideoRef.current.srcObject = remoteStreamData;
-                    
-                    // Play the video
-                    remoteVideoRef.current.play().catch(e => {
-                        console.error('⚠️ Error playing remote video:', e);
-                    });
+                    remoteStreamSetRef.current = true;
+
+                    // Play the video - don't call play() multiple times
+                    if (remoteVideoRef.current.paused) {
+                        remoteVideoRef.current.play().catch(e => {
+                            console.error('⚠️ Error playing remote video:', e);
+                        });
+                    }
                     console.log('✅ Remote stream attached and playing');
+                } else if (remoteStreamSetRef.current) {
+                    console.log('✅ Remote stream already attached, track:', event.track.kind);
                 } else {
                     console.error('❌ Remote video ref not available!');
                 }
@@ -119,10 +125,15 @@ export const useWebRTC = (callState, onOffer, onAnswer, onIceCandidate) => {
         // Monitor connection state
         peerConnection.onconnectionstatechange = () => {
             console.log('🔄 Peer connection state:', peerConnection.connectionState);
-            if (peerConnection.connectionState === 'failed' ||
-                peerConnection.connectionState === 'disconnected') {
-                console.warn('⚠️ Connection failed/disconnected, cleaning up');
+            if (peerConnection.connectionState === 'failed') {
+                console.error('❌ Connection FAILED, cleaning up');
                 cleanup();
+            } else if (peerConnection.connectionState === 'connected') {
+                console.log('✅ Peer connection ESTABLISHED and CONNECTED');
+            } else if (peerConnection.connectionState === 'connecting') {
+                console.log('🔄 Peer connection CONNECTING...');
+            } else if (peerConnection.connectionState === 'disconnected') {
+                console.warn('⚠️ Connection temporarily disconnected, will attempt reconnection');
             }
         };
 
@@ -143,7 +154,7 @@ export const useWebRTC = (callState, onOffer, onAnswer, onIceCandidate) => {
             console.error('❌ No peer connection available!');
             return;
         }
-        
+
         try {
             console.log('   Creating offer...');
             const offer = await peerConnectionRef.current.createOffer();
@@ -172,15 +183,15 @@ export const useWebRTC = (callState, onOffer, onAnswer, onIceCandidate) => {
                 new RTCSessionDescription(offer)
             );
             console.log('✅ Offer set as remote description');
-            
+
             console.log('   Creating answer...');
             const answer = await peerConnectionRef.current.createAnswer();
             console.log('✅ Answer created');
-            
+
             console.log('   Setting answer as local description...');
             await peerConnectionRef.current.setLocalDescription(answer);
             console.log('✅ Answer set as local description');
-            
+
             console.log('📤 Emitting answer to remote peer');
             onAnswer(answer);
         } catch (error) {
@@ -213,7 +224,7 @@ export const useWebRTC = (callState, onOffer, onAnswer, onIceCandidate) => {
             console.warn('⚠️ Peer connection not ready for ICE candidate');
             return;
         }
-        
+
         if (!candidate) {
             return;
         }
@@ -235,6 +246,7 @@ export const useWebRTC = (callState, onOffer, onAnswer, onIceCandidate) => {
             peerConnectionRef.current = null;
             peerConnectionInitializedRef.current = false;
         }
+        remoteStreamSetRef.current = false;
         stopMedia();
         setIsCallActive(false);
         console.log('✅ Cleanup complete');
@@ -307,6 +319,7 @@ export const useWebRTC = (callState, onOffer, onAnswer, onIceCandidate) => {
 
         console.log('\n========================================');
         console.log('📩 ANSWER RECEIVED - Setting remote description');
+        console.log('Answer:', callState.answer);
         console.log('========================================\n');
 
         handleAnswer(callState.answer);
@@ -322,7 +335,7 @@ export const useWebRTC = (callState, onOffer, onAnswer, onIceCandidate) => {
         callState.iceCandidates.forEach((candidate, index) => {
             addIceCandidate(candidate);
         });
-    }, [callState?.iceCandidates]);
+    }, [callState?.iceCandidates?.length]);  // Use length to avoid infinite loops
 
     return {
         localStream,
