@@ -24,9 +24,11 @@ export const useSocket = () => {
                 if (users && Array.isArray(users)) {
                     const filtered = users.filter(u => u && u.userId !== socket.auth?.userId);
                     setActiveUsers(filtered);
-                    console.log('✅ Received initial active users list from server:', filtered);
+                    console.log('✅ Received initial active users list from server:', filtered.length, 'users');
+                    filtered.forEach(u => console.log(`  - ${u.displayName} (${u.userId}) - Status: ${u.status}`));
                 } else {
                     console.log('⚠️ Active users response invalid:', users);
+                    setActiveUsers([]);
                 }
             });
 
@@ -34,9 +36,10 @@ export const useSocket = () => {
             socket.emit('get-incoming-requests', (requests) => {
                 if (requests && Array.isArray(requests)) {
                     setIncomingRequests(requests);
-                    console.log('✅ Received incoming requests:', requests);
+                    console.log('✅ Received incoming requests:', requests.length, 'requests');
                 } else {
                     console.log('⚠️ Incoming requests response invalid:', requests);
+                    setIncomingRequests([]);
                 }
             });
 
@@ -44,18 +47,21 @@ export const useSocket = () => {
             socket.emit('get-outgoing-requests', (requests) => {
                 if (requests && Array.isArray(requests)) {
                     setOutgoingRequests(requests);
-                    console.log('✅ Received outgoing requests:', requests);
+                    console.log('✅ Received outgoing requests:', requests.length, 'requests');
                 } else {
                     console.log('⚠️ Outgoing requests response invalid:', requests);
+                    setOutgoingRequests([]);
                 }
             });
         };
 
         // When user:online is received from server, request the initial data
-        socket.on('user:online', () => {
+        const handleUserOnline = () => {
             console.log('📨 Received user:online from server, requesting initial data...');
             requestInitialData();
-        });
+        };
+
+        socket.on('user:online', handleUserOnline);
 
         // Also request data immediately on connection (in case user:online was missed)
         if (socket.connected) {
@@ -64,49 +70,66 @@ export const useSocket = () => {
         }
 
         // Listen for real-time active users updates
-        socket.on('active-users:update', (users) => {
+        const handleActiveUsersUpdate = (users) => {
             if (users && Array.isArray(users)) {
                 const filtered = users.filter(u => u && u.userId !== socket.auth?.userId);
                 setActiveUsers(filtered);
-                console.log('📡 Real-time active users update received:', filtered);
+                console.log('📡 Real-time active users update received:', filtered.length, 'users');
+                filtered.forEach(u => console.log(`  - ${u.displayName} (${u.userId}) - Status: ${u.status}`));
             }
-        });
+        };
+
+        socket.on('active-users:update', handleActiveUsersUpdate);
 
         // Listen for incoming requests updates
-        socket.on('incoming-requests:update', (requests) => {
+        const handleIncomingRequestsUpdate = (requests) => {
             if (Array.isArray(requests)) {
                 setIncomingRequests(requests);
-                console.log('📡 Incoming requests updated:', requests);
+                console.log('📡 Incoming requests updated:', requests.length, 'requests');
             }
-        });
+        };
+
+        socket.on('incoming-requests:update', handleIncomingRequestsUpdate);
 
         // Listen for outgoing requests updates
-        socket.on('outgoing-requests:update', (requests) => {
+        const handleOutgoingRequestsUpdate = (requests) => {
             if (Array.isArray(requests)) {
                 setOutgoingRequests(requests);
-                console.log('📡 Outgoing requests updated:', requests);
+                console.log('📡 Outgoing requests updated:', requests.length, 'requests');
             }
-        });
+        };
 
-        socket.on('user:offline', (userId) => {
-            setActiveUsers(prev => prev.filter(u => u.userId !== userId));
+        socket.on('outgoing-requests:update', handleOutgoingRequestsUpdate);
+
+        const handleUserOffline = (userId) => {
+            setActiveUsers(prev => {
+                const updated = prev.filter(u => u.userId !== userId);
+                console.log(`👤 User offline: ${userId}, remaining: ${updated.length}`);
+                return updated;
+            });
             setOutgoingRequests(prev => prev.filter(u => u.userId !== userId));
-        });
+        };
+
+        socket.on('user:offline', handleUserOffline);
 
         // Call Request Events
-        socket.on('call:incoming', (data) => {
+        const handleCallIncoming = (data) => {
             if (data && data.caller) {
                 setIncomingRequests(prev => [...prev, data.caller]);
                 console.log('📲 Incoming call:', data.caller);
             }
-        });
+        };
 
-        socket.on('call:reject', (data) => {
+        socket.on('call:incoming', handleCallIncoming);
+
+        const handleCallReject = (data) => {
             setOutgoingRequests(prev => prev.filter(u => u.userId !== data.calleeId));
             console.log('📞 Call rejected');
-        });
+        };
 
-        socket.on('call:accept', (data) => {
+        socket.on('call:reject', handleCallReject);
+
+        const handleCallAccept = (data) => {
             setCallState({
                 callId: data.callId,
                 calleeId: data.calleeId || data.callerId,
@@ -117,9 +140,11 @@ export const useSocket = () => {
             setIncomingRequests([]);
             setOutgoingRequests([]);
             console.log('✅ Call accepted, setting up WebRTC');
-        });
+        };
 
-        socket.on('call:end', () => {
+        socket.on('call:accept', handleCallAccept);
+
+        const handleCallEnd = () => {
             setCallState(null);
             setIncomingRequests([]);
             setOutgoingRequests([]);
@@ -130,48 +155,56 @@ export const useSocket = () => {
                 if (users && Array.isArray(users)) {
                     const filtered = users.filter(u => u && u.userId !== socket.auth?.userId);
                     setActiveUsers(filtered);
-                    console.log('✅ Active users refreshed after call:', filtered);
+                    console.log('✅ Active users refreshed after call:', filtered.length, 'users');
                 }
             });
-        });
+        };
+
+        socket.on('call:end', handleCallEnd);
 
         // WebRTC Signaling
-        socket.on('webrtc:offer', (data) => {
+        const handleWebRTCOffer = (data) => {
             setCallState(prev => ({
                 ...prev,
                 offer: data.offer
             }));
             console.log('📨 Received WebRTC offer');
-        });
+        };
 
-        socket.on('webrtc:answer', (data) => {
+        socket.on('webrtc:offer', handleWebRTCOffer);
+
+        const handleWebRTCAnswer = (data) => {
             setCallState(prev => ({
                 ...prev,
                 answer: data.answer
             }));
             console.log('📨 Received WebRTC answer');
-        });
+        };
 
-        socket.on('webrtc:ice-candidate', (data) => {
+        socket.on('webrtc:answer', handleWebRTCAnswer);
+
+        const handleWebRTCIceCandidate = (data) => {
             setCallState(prev => ({
                 ...prev,
                 iceCandidates: [...(prev?.iceCandidates || []), data.candidate]
             }));
-        });
+        };
+
+        socket.on('webrtc:ice-candidate', handleWebRTCIceCandidate);
 
         return () => {
-            socket.off('active-users:update');
-            socket.off('incoming-requests:update');
-            socket.off('outgoing-requests:update');
-            socket.off('user:online');
-            socket.off('user:offline');
-            socket.off('call:incoming');
-            socket.off('call:reject');
-            socket.off('call:accept');
-            socket.off('call:end');
-            socket.off('webrtc:offer');
-            socket.off('webrtc:answer');
-            socket.off('webrtc:ice-candidate');
+            socket.off('user:online', handleUserOnline);
+            socket.off('active-users:update', handleActiveUsersUpdate);
+            socket.off('incoming-requests:update', handleIncomingRequestsUpdate);
+            socket.off('outgoing-requests:update', handleOutgoingRequestsUpdate);
+            socket.off('user:offline', handleUserOffline);
+            socket.off('call:incoming', handleCallIncoming);
+            socket.off('call:reject', handleCallReject);
+            socket.off('call:accept', handleCallAccept);
+            socket.off('call:end', handleCallEnd);
+            socket.off('webrtc:offer', handleWebRTCOffer);
+            socket.off('webrtc:answer', handleWebRTCAnswer);
+            socket.off('webrtc:ice-candidate', handleWebRTCIceCandidate);
         };
     }, []);
 
