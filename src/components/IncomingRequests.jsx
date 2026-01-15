@@ -21,24 +21,24 @@ export default function IncomingRequests({ requests, onAccept, onReject }) {
                             requests.map(request => {
                                 if (!request || !request.userId) return null;
                                 return (
-                                <tr key={request.userId} className="border-t border-slate-700 hover:bg-slate-800">
-                                    <td className="px-3 py-2">{request.displayName || 'Unknown'}</td>
-                                    <td className="px-3 py-2 flex justify-center gap-2">
-                                        <button
-                                            onClick={() => onAccept(request.userId)}
-                                            className="px-3 py-1 bg-green-600 hover:bg-green-700 rounded text-xs font-medium transition"
-                                        >
-                                            Accept
-                                        </button>
-                                        <button
-                                            onClick={() => onReject(request.userId)}
-                                            className="px-3 py-1 bg-red-600 hover:bg-red-700 rounded text-xs font-medium transition"
-                                        >
-                                            Reject
-                                        </button>
-                                    </td>
-                                </tr>
-                            );
+                                    <tr key={request.userId} className="border-t border-slate-700 hover:bg-slate-800">
+                                        <td className="px-3 py-2">{request.displayName || 'Unknown'}</td>
+                                        <td className="px-3 py-2 flex justify-center gap-2">
+                                            <button
+                                                onClick={() => onAccept(request.userId)}
+                                                className="px-3 py-1 bg-green-600 hover:bg-green-700 rounded text-xs font-medium transition"
+                                            >
+                                                Accept
+                                            </button>
+                                            <button
+                                                onClick={() => onReject(request.userId)}
+                                                className="px-3 py-1 bg-red-600 hover:bg-red-700 rounded text-xs font-medium transition"
+                                            >
+                                                Reject
+                                            </button>
+                                        </td>
+                                    </tr>
+                                );
                             })
                         )}
                     </tbody>

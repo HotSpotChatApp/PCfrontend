@@ -21,18 +21,18 @@ export default function OutgoingRequests({ requests, onCancel }) {
                             requests.map(request => {
                                 if (!request || !request.userId) return null;
                                 return (
-                                <tr key={request.userId} className="border-t border-slate-700 hover:bg-slate-800">
-                                    <td className="px-3 py-2">{request.displayName || 'Unknown'}</td>
-                                    <td className="px-3 py-2 text-center">
-                                        <button
-                                            onClick={() => onCancel(request.userId)}
-                                            className="px-3 py-1 bg-orange-600 hover:bg-orange-700 rounded text-xs font-medium transition"
-                                        >
-                                            Cancel
-                                        </button>
-                                    </td>
-                                </tr>
-                            );
+                                    <tr key={request.userId} className="border-t border-slate-700 hover:bg-slate-800">
+                                        <td className="px-3 py-2">{request.displayName || 'Unknown'}</td>
+                                        <td className="px-3 py-2 text-center">
+                                            <button
+                                                onClick={() => onCancel(request.userId)}
+                                                className="px-3 py-1 bg-orange-600 hover:bg-orange-700 rounded text-xs font-medium transition"
+                                            >
+                                                Cancel
+                                            </button>
+                                        </td>
+                                    </tr>
+                                );
                             })
                         )}
                     </tbody>
