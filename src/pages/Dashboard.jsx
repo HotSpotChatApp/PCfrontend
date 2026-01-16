@@ -134,10 +134,10 @@ export default function Dashboard({ user, onLogout }) {
             console.log('🔴 End call button clicked');
             console.log('   Current isCallActive:', isCallActive);
             console.log('   Current callState:', callState);
-            
+
             // End call through socket
             socketEndCall();
-            
+
             // Give socket time to send end signal before cleanup
             setTimeout(() => {
                 console.log('🧹 Performing WebRTC cleanup after delay');

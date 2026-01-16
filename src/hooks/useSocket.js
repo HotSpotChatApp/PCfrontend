@@ -126,7 +126,7 @@ export const useSocket = () => {
         const handleCallReject = (data) => {
             console.log('📞 Call rejected by:', data.calleeId);
             setOutgoingRequests(prev => prev.filter(u => u.userId !== data.calleeId));
-            
+
             // Refresh active users to ensure both are still available
             setTimeout(() => {
                 socket.emit('get-active-users', (users) => {
@@ -147,7 +147,7 @@ export const useSocket = () => {
             console.log('   Caller ID:', data.callerId);
             console.log('   Callee ID:', data.calleeId);
             console.log('   Initiator:', data.initiator);
-            
+
             setCallState({
                 callId: data.callId,
                 calleeId: data.calleeId || data.callerId,
@@ -156,11 +156,11 @@ export const useSocket = () => {
                 status: 'accepted',
                 startTime: Date.now()
             });
-            
+
             // Clear requests when call is accepted
             setIncomingRequests([]);
             setOutgoingRequests([]);
-            
+
             console.log('✅ Call accepted, WebRTC setup will begin');
         };
 
@@ -170,7 +170,7 @@ export const useSocket = () => {
             console.log('📵 Call ended from server');
             console.log('   Clearing callState');
             setCallState(null);
-            
+
             console.log('   Clearing requests');
             setIncomingRequests([]);
             setOutgoingRequests([]);
@@ -243,15 +243,15 @@ export const useSocket = () => {
             console.error('❌ Socket not available for call request');
             return;
         }
-        
+
         const targetUser = activeUsers.find(u => u.userId === targetUserId);
         console.log('📞 Sending call request to:', targetUser?.displayName || targetUserId);
-        
+
         socket.emit('call:request', {
             targetUserId,
             targetDisplayName: targetUser?.displayName || 'Unknown'
         });
-        
+
         // Add to outgoing requests
         if (targetUser) {
             setOutgoingRequests(prev => {
@@ -262,7 +262,7 @@ export const useSocket = () => {
                 return [...prev, targetUser];
             });
         }
-        
+
         console.log('✅ Call request sent to', targetUser?.displayName);
     };
 
@@ -272,7 +272,7 @@ export const useSocket = () => {
             console.error('❌ Socket not available for accept');
             return;
         }
-        
+
         console.log('✅ Accepting call from:', callerId);
         socket.emit('call:accept', { callerId });
     };
@@ -283,10 +283,10 @@ export const useSocket = () => {
             console.error('❌ Socket not available for reject');
             return;
         }
-        
+
         console.log('📵 Rejecting call from:', callerId);
         socket.emit('call:reject', { callerId });
-        
+
         // Remove from incoming requests
         setIncomingRequests(prev => {
             const updated = prev.filter(r => r.userId !== callerId);
@@ -309,7 +309,7 @@ export const useSocket = () => {
 
         console.log('📞 Ending call:', callState.callId);
         console.log('   Duration: ~', Math.floor((Date.now() - (callState?.startTime || Date.now())) / 1000), 'seconds');
-        
+
         socket.emit('call:end', { callId: callState.callId }, (error) => {
             if (error) {
                 console.error('❌ Error ending call:', error);

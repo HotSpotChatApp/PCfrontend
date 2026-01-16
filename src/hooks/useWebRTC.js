@@ -502,7 +502,7 @@ export const useWebRTC = (callState, onOffer, onAnswer, onIceCandidate) => {
 
             // Reset all refs
             resetRefs();
-            
+
             // Clear state
             setRemoteStream(null);
             setLocalStream(null);
