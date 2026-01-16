@@ -124,30 +124,54 @@ export const useSocket = () => {
         socket.on('call:incoming', handleCallIncoming);
 
         const handleCallReject = (data) => {
+            console.log('📞 Call rejected by:', data.calleeId);
             setOutgoingRequests(prev => prev.filter(u => u.userId !== data.calleeId));
-            console.log('📞 Call rejected');
+            
+            // Refresh active users to ensure both are still available
+            setTimeout(() => {
+                socket.emit('get-active-users', (users) => {
+                    if (users && Array.isArray(users)) {
+                        const filtered = users.filter(u => u && u.userId !== socket.auth?.userId);
+                        setActiveUsers(filtered);
+                        console.log('✅ Active users refreshed after reject');
+                    }
+                });
+            }, 100);
         };
 
         socket.on('call:reject', handleCallReject);
 
         const handleCallAccept = (data) => {
+            console.log('📞 Call accepted, setting up WebRTC');
+            console.log('   Call ID:', data.callId);
+            console.log('   Caller ID:', data.callerId);
+            console.log('   Callee ID:', data.calleeId);
+            console.log('   Initiator:', data.initiator);
+            
             setCallState({
                 callId: data.callId,
                 calleeId: data.calleeId || data.callerId,
                 callerId: data.callerId || data.calleeId,
                 initiator: data.initiator || false,
-                status: 'accepted'
+                status: 'accepted',
+                startTime: Date.now()
             });
+            
+            // Clear requests when call is accepted
             setIncomingRequests([]);
             setOutgoingRequests([]);
-            console.log('✅ Call accepted, setting up WebRTC');
+            
+            console.log('✅ Call accepted, WebRTC setup will begin');
         };
 
         socket.on('call:accept', handleCallAccept);
 
         const handleCallEnd = () => {
             console.log('📵 Call ended from server');
+            console.log('   Clearing callState');
             setCallState(null);
+            
+            console.log('   Clearing requests');
             setIncomingRequests([]);
             setOutgoingRequests([]);
 
@@ -157,12 +181,12 @@ export const useSocket = () => {
                 socket.emit('get-active-users', (users) => {
                     if (users && Array.isArray(users)) {
                         const filtered = users.filter(u => u && u.userId !== socket.auth?.userId);
-                        setActiveUsers(filtered);
                         console.log('✅ Active users refreshed after call:', filtered.length, 'users');
+                        setActiveUsers(filtered);
                         filtered.forEach(u => console.log(`  - ${u.displayName} (${u.userId})`));
                     }
                 });
-            }, 500); // Small delay to ensure backend state is updated
+            }, 150); // Slightly longer delay to ensure cleanup is done
         };
 
         socket.on('call:end', handleCallEnd);
@@ -215,30 +239,66 @@ export const useSocket = () => {
 
     const sendCallRequest = (targetUserId) => {
         const socket = getSocket();
+        if (!socket) {
+            console.error('❌ Socket not available for call request');
+            return;
+        }
+        
         const targetUser = activeUsers.find(u => u.userId === targetUserId);
+        console.log('📞 Sending call request to:', targetUser?.displayName || targetUserId);
+        
         socket.emit('call:request', {
             targetUserId,
             targetDisplayName: targetUser?.displayName || 'Unknown'
         });
-        setOutgoingRequests(prev => [...prev, targetUser || { userId: targetUserId, displayName: 'Unknown' }]);
-        console.log('📞 Call request sent to', targetUser?.displayName);
+        
+        // Add to outgoing requests
+        if (targetUser) {
+            setOutgoingRequests(prev => {
+                // Avoid duplicates
+                if (prev.some(r => r.userId === targetUserId)) {
+                    return prev;
+                }
+                return [...prev, targetUser];
+            });
+        }
+        
+        console.log('✅ Call request sent to', targetUser?.displayName);
     };
 
     const acceptCall = (callerId) => {
         const socket = getSocket();
+        if (!socket) {
+            console.error('❌ Socket not available for accept');
+            return;
+        }
+        
+        console.log('✅ Accepting call from:', callerId);
         socket.emit('call:accept', { callerId });
     };
 
     const rejectCall = (callerId) => {
         const socket = getSocket();
+        if (!socket) {
+            console.error('❌ Socket not available for reject');
+            return;
+        }
+        
+        console.log('📵 Rejecting call from:', callerId);
         socket.emit('call:reject', { callerId });
-        setIncomingRequests(prev => prev.filter(r => r.userId !== callerId));
+        
+        // Remove from incoming requests
+        setIncomingRequests(prev => {
+            const updated = prev.filter(r => r.userId !== callerId);
+            console.log('✅ Call rejected, remaining incoming requests:', updated.length);
+            return updated;
+        });
     };
 
     const endCall = () => {
         const socket = getSocket();
         if (!socket) {
-            console.error('❌ Socket not available');
+            console.error('❌ Socket not available for end call');
             return;
         }
 
@@ -248,12 +308,14 @@ export const useSocket = () => {
         }
 
         console.log('📞 Ending call:', callState.callId);
+        console.log('   Duration: ~', Math.floor((Date.now() - (callState?.startTime || Date.now())) / 1000), 'seconds');
+        
         socket.emit('call:end', { callId: callState.callId }, (error) => {
             if (error) {
                 console.error('❌ Error ending call:', error);
                 setError(error);
             } else {
-                console.log('✅ Call end signal sent');
+                console.log('✅ Call end signal sent to server');
             }
         });
     };

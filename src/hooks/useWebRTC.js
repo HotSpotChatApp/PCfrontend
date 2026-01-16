@@ -214,12 +214,20 @@ export const useWebRTC = (callState, onOffer, onAnswer, onIceCandidate) => {
         }
     };
 
-    // Create and send answer with timeout
+    // Create and send answer with timeout - WITH RETRY
     const createAnswer = async (offer) => {
         console.log('📥 createAnswer called');
+
+        // Check if peer connection is ready
         if (!peerConnectionRef.current) {
             console.error('❌ No peer connection available!');
             throw new Error('No peer connection available');
+        }
+
+        // Check if peer connection is still in usable state
+        if (peerConnectionRef.current.connectionState === 'closed') {
+            console.error('❌ Peer connection is closed!');
+            throw new Error('Peer connection is closed');
         }
 
         try {
@@ -319,11 +327,13 @@ export const useWebRTC = (callState, onOffer, onAnswer, onIceCandidate) => {
 
     // Reset refs after cleanup
     const resetRefs = () => {
+        console.log('🔄 Resetting all refs');
         mediaStartedRef.current = false;
         peerConnectionInitializedRef.current = false;
         remoteStreamSetRef.current = false;
         retryCountRef.current = 0;
         setupAbortedRef.current = false;
+        console.log('✅ All refs reset');
     };
 
     // Cleanup
@@ -338,7 +348,11 @@ export const useWebRTC = (callState, onOffer, onAnswer, onIceCandidate) => {
 
         // Close peer connection
         if (peerConnectionRef.current) {
-            peerConnectionRef.current.close();
+            try {
+                peerConnectionRef.current.close();
+            } catch (e) {
+                console.warn('⚠️ Error closing peer connection:', e);
+            }
             peerConnectionRef.current = null;
         }
 
@@ -350,6 +364,7 @@ export const useWebRTC = (callState, onOffer, onAnswer, onIceCandidate) => {
 
         setIsCallActive(false);
         setConnectionError(null);
+        setRemoteStream(null);
         console.log('✅ Cleanup complete');
     };
 
@@ -447,9 +462,84 @@ export const useWebRTC = (callState, onOffer, onAnswer, onIceCandidate) => {
         };
     }, [callState?.status, callState?.initiator]);
 
-    // Handle incoming offer from remote
+    // Cleanup when call ends
+    useEffect(() => {
+        // When callState becomes null, ensure full cleanup
+        if (callState === null) {
+            console.log('📞 Call state cleared, performing full cleanup');
+
+            // Close peer connection
+            if (peerConnectionRef.current) {
+                try {
+                    peerConnectionRef.current.close();
+                    console.log('✅ Peer connection closed');
+                } catch (e) {
+                    console.warn('⚠️ Error closing peer connection:', e);
+                }
+                peerConnectionRef.current = null;
+            }
+
+            // Stop media tracks
+            if (localStream) {
+                localStream.getTracks().forEach(track => {
+                    try {
+                        track.stop();
+                    } catch (e) {
+                        console.warn('⚠️ Error stopping track:', e);
+                    }
+                });
+            }
+
+            if (remoteStream) {
+                remoteStream.getTracks().forEach(track => {
+                    try {
+                        track.stop();
+                    } catch (e) {
+                        console.warn('⚠️ Error stopping track:', e);
+                    }
+                });
+            }
+
+            // Reset all refs
+            resetRefs();
+            
+            // Clear state
+            setRemoteStream(null);
+            setLocalStream(null);
+            setIsCallActive(false);
+            setConnectionError(null);
+
+            console.log('✅ Full cleanup completed');
+            console.log('   isCallActive reset to:', false);
+        }
+    }, [callState]);
     useEffect(() => {
         if (!callState?.offer) {
+            return;
+        }
+
+        // Wait for peer connection to be ready before creating answer
+        if (!peerConnectionRef.current) {
+            console.log('⏳ Offer received but peer connection not ready yet, waiting...');
+
+            const checkAndCreateAnswer = async () => {
+                let attempts = 0;
+                while (!peerConnectionRef.current && attempts < 50) {
+                    await new Promise(resolve => setTimeout(resolve, 100));
+                    attempts++;
+                }
+
+                if (peerConnectionRef.current) {
+                    console.log('\n========================================');
+                    console.log('📨 OFFER RECEIVED - Creating answer');
+                    console.log('========================================\n');
+                    createAnswer(callState.offer);
+                } else {
+                    console.error('❌ Peer connection never became ready for answer');
+                }
+            };
+
+            checkAndCreateAnswer();
             return;
         }
 
@@ -474,9 +564,32 @@ export const useWebRTC = (callState, onOffer, onAnswer, onIceCandidate) => {
         handleAnswer(callState.answer);
     }, [callState?.answer]);
 
-    // Handle ICE candidates
+    // Handle ICE candidates - WAIT FOR PEER CONNECTION
     useEffect(() => {
         if (!callState?.iceCandidates || callState.iceCandidates.length === 0) {
+            return;
+        }
+
+        // If peer connection not ready yet, queue candidates
+        if (!peerConnectionRef.current) {
+            console.log('⏳ ICE candidates received but peer connection not ready, will retry...');
+
+            const checkAndAddCandidates = async () => {
+                let attempts = 0;
+                while (!peerConnectionRef.current && attempts < 50) {
+                    await new Promise(resolve => setTimeout(resolve, 100));
+                    attempts++;
+                }
+
+                if (peerConnectionRef.current) {
+                    console.log('\n❄️ Processing', callState.iceCandidates.length, 'ICE candidates (after waiting)');
+                    callState.iceCandidates.forEach((candidate, index) => {
+                        addIceCandidate(candidate);
+                    });
+                }
+            };
+
+            checkAndAddCandidates();
             return;
         }
 
@@ -484,7 +597,7 @@ export const useWebRTC = (callState, onOffer, onAnswer, onIceCandidate) => {
         callState.iceCandidates.forEach((candidate, index) => {
             addIceCandidate(candidate);
         });
-    }, [callState?.iceCandidates?.length]);  // Use length to avoid infinite loops
+    }, [callState?.iceCandidates?.length]);
 
     return {
         localStream,

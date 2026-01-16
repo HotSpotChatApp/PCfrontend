@@ -44,6 +44,22 @@ export default function Dashboard({ user, onLogout }) {
 
     const [isUpdating, setIsUpdating] = useState(false);
 
+    // Monitor callState changes and ensure proper cleanup
+    useEffect(() => {
+        if (callState === null && isCallActive) {
+            console.log('📵 CallState is null but isCallActive is still true, forcing cleanup');
+            cleanupWebRTC();
+        }
+    }, [callState, isCallActive, cleanupWebRTC]);
+
+    // Also monitor when call state transitions to null
+    useEffect(() => {
+        if (callState === null) {
+            console.log('📵 Call state is now null - ensuring UI is clean');
+            // No need to do anything here, the above effect handles it
+        }
+    }, [callState]);
+
     // Handle browser close and page unload - end call and go offline
     useEffect(() => {
         const handleBeforeUnload = (e) => {
@@ -83,13 +99,17 @@ export default function Dashboard({ user, onLogout }) {
         };
     }, [callState, isUserActive, isCallActive]);
 
-    // Monitor connection errors
+    // Monitor connection errors and auto-end call if needed
     useEffect(() => {
         if (connectionError) {
             console.error('🚨 Connection error detected:', connectionError);
-            // Could show error toast/notification here
+            // Auto-end call if connection fails
+            if (isCallActive && callState) {
+                console.log('🔴 Auto-ending call due to connection error');
+                handleEndCall();
+            }
         }
-    }, [connectionError]);
+    }, [connectionError, isCallActive, callState]);
 
     const handleCallRequest = (targetUser) => {
         setIsUpdating(true);
@@ -111,10 +131,22 @@ export default function Dashboard({ user, onLogout }) {
 
     const handleEndCall = () => {
         try {
+            console.log('🔴 End call button clicked');
+            console.log('   Current isCallActive:', isCallActive);
+            console.log('   Current callState:', callState);
+            
+            // End call through socket
             socketEndCall();
-            cleanupWebRTC();
+            
+            // Give socket time to send end signal before cleanup
+            setTimeout(() => {
+                console.log('🧹 Performing WebRTC cleanup after delay');
+                cleanupWebRTC();
+                console.log('✅ Call cleanup completed');
+            }, 100);
         } catch (error) {
-            console.error('Error ending call:', error);
+            console.error('❌ Error ending call:', error);
+            cleanupWebRTC();
         }
     };
 
@@ -161,7 +193,7 @@ export default function Dashboard({ user, onLogout }) {
                     <ActiveUsers
                         users={activeUsers}
                         onCall={handleCallRequest}
-                        disabled={isCallActive}
+                        disabled={isCallActive || callState !== null}
                         currentUserId={user?.userId}
                     />
                     <IncomingRequests
@@ -177,7 +209,7 @@ export default function Dashboard({ user, onLogout }) {
 
                 {/* Call Controls */}
                 <CallControls
-                    isCallActive={isCallActive}
+                    isCallActive={isCallActive && callState !== null}
                     onEndCall={handleEndCall}
                 />
             </div>
