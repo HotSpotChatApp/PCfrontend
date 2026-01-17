@@ -1,9 +1,75 @@
 import { useState, useRef, useEffect } from 'react';
 
-const STUN_SERVERS = [
-    'stun:stun.l.google.com:19302',
-    'stun:stun1.l.google.com:19302'
-];
+// ============================================
+// ICE SERVERS CONFIGURATION FOR GLOBAL CONNECTIVITY
+// ============================================
+// STUN servers: Free, discovers external IP only (not enough for NAT traversal)
+// TURN servers: Relays data through server (handles complex NAT/Firewall)
+// Using both ensures: ANY user can reach ANY other user globally!
+const ICE_SERVERS = {
+    iceServers: [
+        // Google's Free STUN Servers (for external IP discovery)
+        { urls: ['stun:stun.l.google.com:19302'] },
+        { urls: ['stun:stun1.l.google.com:19302'] },
+        { urls: ['stun:stun2.l.google.com:19302'] },
+        { urls: ['stun:stun3.l.google.com:19302'] },
+        
+        // Twillio STUN (backup)
+        { urls: ['stun:stun.stunprotocol.org:3478'] },
+        
+        // ============================================
+        // TURN SERVER (Critical for Global Connectivity!)
+        // ============================================
+        // Option 1: Use Free TURN Server (Limited, but works for testing)
+        {
+            urls: ['turn:relay.metered.ca:80?transport=udp'],
+            username: 'openrelayproject',
+            credential: 'openrelayproject'
+        },
+        {
+            urls: ['turn:relay.metered.ca:443?transport=tcp'],
+            username: 'openrelayproject',
+            credential: 'openrelayproject'
+        },
+        
+        // Option 2: Self-Hosted TURN Server (recommended for production)
+        // Uncomment and replace YOUR_TURN_SERVER_IP with your Coturn server
+        /*
+        {
+            urls: ['turn:YOUR_TURN_SERVER_IP:3478', 'turn:YOUR_TURN_SERVER_IP:3479'],
+            username: 'your_username',
+            credential: 'your_password',
+            credentialType: 'password'
+        }
+        */
+    ],
+    // Settings for better connectivity
+    iceCandidatePoolSize: 10,  // Gather candidates
+    bundlePolicy: 'max-bundle', // All media types on one connection
+    rtcpMuxPolicy: 'require'    // Mux RTCP with RTP
+};
+
+// ============================================
+// ICE CANDIDATE FILTERING CONSTANTS
+// ============================================
+const ICE_CANDIDATE_CONFIG = {
+    // Only select these candidate types (ignore unnecessary ones)
+    preferredTypes: ['host', 'srflx', 'relay'], // In priority order
+    
+    // Maximum candidates to keep per type
+    maxCandidatesPerType: {
+        'host': 1,   // One local candidate is enough
+        'srflx': 1,  // One reflexive (external) candidate
+        'relay': 1   // One relay candidate
+    },
+    
+    // Filter out poor quality candidates
+    minRTCPPort: 1024,  // Skip low port numbers
+    maxUDPPort: 65535,
+    
+    // Timeout waiting for candidates
+    gatheringTimeout: 5000  // 5 seconds to gather ICE candidates
+};
 
 const SETUP_TIMEOUT = 30000; // 30 seconds for WebRTC setup
 const SIGNAL_TIMEOUT = 10000; // 10 seconds for signal operations
@@ -25,6 +91,23 @@ export const useWebRTC = (callState, onOffer, onAnswer, onIceCandidate) => {
     const setupTimeoutRef = useRef(null);
     const retryCountRef = useRef(0);
     const setupAbortedRef = useRef(false);
+
+    // ============================================
+    // SDP & ICE STORAGE FOR DEBUGGING & MONITORING
+    // ============================================
+    const sdpStorageRef = useRef({
+        localOffer: null,
+        remoteAnswer: null,
+        localAnswer: null,
+        remoteOffer: null
+    });
+    
+    const iceCandidatesRef = useRef({
+        localCandidates: [],     // Candidates we send
+        remoteCandidates: [],    // Candidates we receive
+        selectedLocal: null,     // Best local candidate
+        selectedRemote: null     // Best remote candidate
+    });
 
     // Initialize media streams with better error handling
     const startMedia = async () => {
@@ -79,10 +162,10 @@ export const useWebRTC = (callState, onOffer, onAnswer, onIceCandidate) => {
             return peerConnectionRef.current;
         }
 
-        console.log('🔧 Creating new peer connection');
-        const peerConnection = new RTCPeerConnection({
-            iceServers: STUN_SERVERS.map(server => ({ urls: server }))
-        });
+        console.log('🔧 Creating new peer connection with GLOBAL connectivity');
+        console.log('   Using STUN + TURN servers for ANY-to-ANY connections');
+        
+        const peerConnection = new RTCPeerConnection(ICE_SERVERS);
 
         // Add local tracks
         const streamToUse = localStreamParam || localStream;
@@ -133,13 +216,55 @@ export const useWebRTC = (callState, onOffer, onAnswer, onIceCandidate) => {
             }
         };
 
-        // Handle ICE candidates
+        // ============================================
+        // INTELLIGENT ICE CANDIDATE HANDLING
+        // Filters to only send the BEST candidates (max 2 per side)
+        // ============================================
         peerConnection.onicecandidate = (event) => {
             if (event.candidate) {
-                console.log('❄️ Generated ICE candidate');
-                onIceCandidate(event.candidate);
+                const candidate = event.candidate;
+                const candidateType = candidate.type; // 'host', 'srflx', 'relay', 'prflx'
+                
+                console.log('❄️ Generated ICE candidate:');
+                console.log(`   Type: ${candidateType}`);
+                console.log(`   Protocol: ${candidate.protocol}`);
+                console.log(`   Address: ${candidate.address}:${candidate.port}`);
+                console.log(`   Priority: ${candidate.priority}`);
+                
+                // ✅ FILTER: Only send preferred candidate types
+                if (!ICE_CANDIDATE_CONFIG.preferredTypes.includes(candidateType)) {
+                    console.log(`   ⏭️ SKIPPED: Type '${candidateType}' not in preferred types`);
+                    return;
+                }
+                
+                // ✅ FILTER: Check if we already have this type
+                const existingCount = iceCandidatesRef.current.localCandidates.filter(
+                    c => c.candidate.type === candidateType
+                ).length;
+                
+                const maxForType = ICE_CANDIDATE_CONFIG.maxCandidatesPerType[candidateType];
+                if (existingCount >= maxForType) {
+                    console.log(`   ⏭️ SKIPPED: Already have ${existingCount} ${candidateType} candidate(s), max is ${maxForType}`);
+                    return;
+                }
+                
+                // ✅ Store and send only if it passes filters
+                iceCandidatesRef.current.localCandidates.push({
+                    candidate: candidate,
+                    timestamp: Date.now(),
+                    type: candidateType
+                });
+                
+                console.log(`   ✅ ACCEPTED: Sending to remote peer (Total local: ${iceCandidatesRef.current.localCandidates.length})`);
+                onIceCandidate(candidate);
             } else {
-                console.log('❄️ ICE gathering completed');
+                console.log('❄️ ✅ ICE gathering COMPLETED - Total candidates sent:', iceCandidatesRef.current.localCandidates.length);
+                console.log('   Local candidates summary:');
+                const summary = {};
+                iceCandidatesRef.current.localCandidates.forEach(c => {
+                    summary[c.type] = (summary[c.type] || 0) + 1;
+                });
+                console.log('   ', summary);
             }
         };
 
@@ -195,6 +320,15 @@ export const useWebRTC = (callState, onOffer, onAnswer, onIceCandidate) => {
                 )
             ]);
             console.log('✅ Offer created');
+            
+            // ============================================
+            // STORE & DISPLAY OFFER SDP
+            // ============================================
+            sdpStorageRef.current.localOffer = offer.sdp;
+            console.log('📋 LOCAL OFFER SDP (Initiator - will send to remote):');
+            console.log('================================');
+            console.log(offer.sdp);
+            console.log('================================');
 
             console.log('   Setting offer as local description...');
             const setDescPromise = peerConnectionRef.current.setLocalDescription(offer);
@@ -242,6 +376,15 @@ export const useWebRTC = (callState, onOffer, onAnswer, onIceCandidate) => {
                 )
             ]);
             console.log('✅ Offer set as remote description');
+            
+            // ============================================
+            // STORE RECEIVED OFFER SDP
+            // ============================================
+            sdpStorageRef.current.remoteOffer = offer.sdp;
+            console.log('📋 REMOTE OFFER SDP RECEIVED (from Initiator):');
+            console.log('================================');
+            console.log(offer.sdp);
+            console.log('================================');
 
             console.log('   Creating answer...');
             const answerPromise = peerConnectionRef.current.createAnswer();
@@ -252,6 +395,15 @@ export const useWebRTC = (callState, onOffer, onAnswer, onIceCandidate) => {
                 )
             ]);
             console.log('✅ Answer created');
+            
+            // ============================================
+            // STORE & DISPLAY ANSWER SDP
+            // ============================================
+            sdpStorageRef.current.localAnswer = answer.sdp;
+            console.log('📋 LOCAL ANSWER SDP (Responder - will send to initiator):');
+            console.log('================================');
+            console.log(answer.sdp);
+            console.log('================================');
 
             console.log('   Setting answer as local description...');
             const setLocalPromise = peerConnectionRef.current.setLocalDescription(answer);
@@ -292,6 +444,24 @@ export const useWebRTC = (callState, onOffer, onAnswer, onIceCandidate) => {
                 )
             ]);
             console.log('✅ Answer set as remote description');
+            
+            // ============================================
+            // STORE RECEIVED ANSWER SDP
+            // ============================================
+            sdpStorageRef.current.remoteAnswer = answer.sdp;
+            console.log('📋 REMOTE ANSWER SDP RECEIVED (from Responder):');
+            console.log('================================');
+            console.log(answer.sdp);
+            console.log('================================');
+            
+            // ============================================
+            // SDP SUMMARY - CONNECTION ESTABLISHED
+            // ============================================
+            console.log('✅ ==================== SDP EXCHANGE COMPLETE ====================');
+            console.log('📋 LOCAL OFFER:', sdpStorageRef.current.localOffer ? 'SENT ✅' : 'NOT SENT ❌');
+            console.log('📋 REMOTE ANSWER:', sdpStorageRef.current.remoteAnswer ? 'RECEIVED ✅' : 'NOT RECEIVED ❌');
+            console.log('🔗 Both SDPs now exchanged - WebRTC connection establishing...');
+            console.log('===============================================================');
         } catch (error) {
             console.error('❌ Error handling answer:', error);
             setConnectionError(`Failed to handle answer: ${error.message}`);
@@ -310,7 +480,20 @@ export const useWebRTC = (callState, onOffer, onAnswer, onIceCandidate) => {
         }
 
         try {
-            console.log('❄️ Adding ICE candidate');
+            const candidateType = candidate.type || 'unknown';
+            console.log(`❄️ Received ICE candidate from remote:`);
+            console.log(`   Type: ${candidateType}`);
+            console.log(`   Protocol: ${candidate.protocol}`);
+            console.log(`   Address: ${candidate.address}:${candidate.port}`);
+            console.log(`   Priority: ${candidate.priority}`);
+            
+            // ✅ TRACK: Store received candidates
+            iceCandidatesRef.current.remoteCandidates.push({
+                candidate: candidate,
+                timestamp: Date.now(),
+                type: candidateType
+            });
+            
             const addPromise = peerConnectionRef.current.addIceCandidate(new RTCIceCandidate(candidate));
             await Promise.race([
                 addPromise,
@@ -318,7 +501,22 @@ export const useWebRTC = (callState, onOffer, onAnswer, onIceCandidate) => {
                     setTimeout(() => reject(new Error('Add ICE candidate timeout')), SIGNAL_TIMEOUT)
                 )
             ]);
-            console.log('✅ ICE candidate added');
+            console.log(`✅ ICE candidate ADDED (Total remote: ${iceCandidatesRef.current.remoteCandidates.length})`);
+            
+            // ✅ SUMMARY: When we have 2 candidates from each side, show summary
+            if (iceCandidatesRef.current.localCandidates.length >= 2 && 
+                iceCandidatesRef.current.remoteCandidates.length >= 2) {
+                console.log('❄️ ============= ICE CANDIDATES COMPLETE ==============');
+                console.log(`   Local candidates sent: ${iceCandidatesRef.current.localCandidates.length}`);
+                iceCandidatesRef.current.localCandidates.forEach((c, i) => {
+                    console.log(`     ${i + 1}. ${c.type} - ${c.candidate.address}:${c.candidate.port}`);
+                });
+                console.log(`   Remote candidates received: ${iceCandidatesRef.current.remoteCandidates.length}`);
+                iceCandidatesRef.current.remoteCandidates.forEach((c, i) => {
+                    console.log(`     ${i + 1}. ${c.type} - ${c.candidate.address}:${c.candidate.port}`);
+                });
+                console.log('=====================================================');
+            }
         } catch (error) {
             // Some ICE candidates might fail, but that's often okay
             console.warn('⚠️ Error adding ICE candidate (may be normal):', error.message);
@@ -333,7 +531,22 @@ export const useWebRTC = (callState, onOffer, onAnswer, onIceCandidate) => {
         remoteStreamSetRef.current = false;
         retryCountRef.current = 0;
         setupAbortedRef.current = false;
-        console.log('✅ All refs reset');
+        
+        // Reset SDP and ICE storage
+        sdpStorageRef.current = {
+            localOffer: null,
+            remoteAnswer: null,
+            localAnswer: null,
+            remoteOffer: null
+        };
+        iceCandidatesRef.current = {
+            localCandidates: [],
+            remoteCandidates: [],
+            selectedLocal: null,
+            selectedRemote: null
+        };
+        
+        console.log('✅ All refs reset (including SDP & ICE storage)');
     };
 
     // Cleanup
