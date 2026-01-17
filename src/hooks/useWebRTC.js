@@ -13,10 +13,10 @@ const ICE_SERVERS = {
         { urls: ['stun:stun1.l.google.com:19302'] },
         { urls: ['stun:stun2.l.google.com:19302'] },
         { urls: ['stun:stun3.l.google.com:19302'] },
-        
+
         // Twillio STUN (backup)
         { urls: ['stun:stun.stunprotocol.org:3478'] },
-        
+
         // ============================================
         // TURN SERVER (Critical for Global Connectivity!)
         // ============================================
@@ -31,7 +31,7 @@ const ICE_SERVERS = {
             username: 'openrelayproject',
             credential: 'openrelayproject'
         },
-        
+
         // Option 2: Self-Hosted TURN Server (recommended for production)
         // Uncomment and replace YOUR_TURN_SERVER_IP with your Coturn server
         /*
@@ -55,18 +55,18 @@ const ICE_SERVERS = {
 const ICE_CANDIDATE_CONFIG = {
     // Only select these candidate types (ignore unnecessary ones)
     preferredTypes: ['host', 'srflx', 'relay'], // In priority order
-    
+
     // Maximum candidates to keep per type
     maxCandidatesPerType: {
         'host': 1,   // One local candidate is enough
         'srflx': 1,  // One reflexive (external) candidate
         'relay': 1   // One relay candidate
     },
-    
+
     // Filter out poor quality candidates
     minRTCPPort: 1024,  // Skip low port numbers
     maxUDPPort: 65535,
-    
+
     // Timeout waiting for candidates
     gatheringTimeout: 5000  // 5 seconds to gather ICE candidates
 };
@@ -101,7 +101,7 @@ export const useWebRTC = (callState, onOffer, onAnswer, onIceCandidate) => {
         localAnswer: null,
         remoteOffer: null
     });
-    
+
     const iceCandidatesRef = useRef({
         localCandidates: [],     // Candidates we send
         remoteCandidates: [],    // Candidates we receive
@@ -164,7 +164,7 @@ export const useWebRTC = (callState, onOffer, onAnswer, onIceCandidate) => {
 
         console.log('🔧 Creating new peer connection with GLOBAL connectivity');
         console.log('   Using STUN + TURN servers for ANY-to-ANY connections');
-        
+
         const peerConnection = new RTCPeerConnection(ICE_SERVERS);
 
         // Add local tracks
@@ -224,39 +224,57 @@ export const useWebRTC = (callState, onOffer, onAnswer, onIceCandidate) => {
             if (event.candidate) {
                 const candidate = event.candidate;
                 const candidateType = candidate.type; // 'host', 'srflx', 'relay', 'prflx'
-                
+
                 console.log('❄️ Generated ICE candidate:');
                 console.log(`   Type: ${candidateType}`);
                 console.log(`   Protocol: ${candidate.protocol}`);
                 console.log(`   Address: ${candidate.address}:${candidate.port}`);
                 console.log(`   Priority: ${candidate.priority}`);
-                
+
                 // ✅ FILTER: Only send preferred candidate types
                 if (!ICE_CANDIDATE_CONFIG.preferredTypes.includes(candidateType)) {
                     console.log(`   ⏭️ SKIPPED: Type '${candidateType}' not in preferred types`);
                     return;
                 }
-                
+
                 // ✅ FILTER: Check if we already have this type
                 const existingCount = iceCandidatesRef.current.localCandidates.filter(
                     c => c.candidate.type === candidateType
                 ).length;
-                
+
                 const maxForType = ICE_CANDIDATE_CONFIG.maxCandidatesPerType[candidateType];
                 if (existingCount >= maxForType) {
                     console.log(`   ⏭️ SKIPPED: Already have ${existingCount} ${candidateType} candidate(s), max is ${maxForType}`);
                     return;
                 }
-                
+
                 // ✅ Store and send only if it passes filters
                 iceCandidatesRef.current.localCandidates.push({
                     candidate: candidate,
                     timestamp: Date.now(),
                     type: candidateType
                 });
-                
+
                 console.log(`   ✅ ACCEPTED: Sending to remote peer (Total local: ${iceCandidatesRef.current.localCandidates.length})`);
-                onIceCandidate(candidate);
+                
+                // ⚠️ CRITICAL FIX: Serialize RTCIceCandidate properly for Socket.IO transmission
+                // RTCIceCandidate is not a plain object, so we need to convert it to JSON
+                const candidateData = {
+                    candidate: candidate.candidate,
+                    sdpMLineIndex: candidate.sdpMLineIndex,
+                    sdpMid: candidate.sdpMid,
+                    usernameFragment: candidate.usernameFragment,
+                    // Store additional info for verification
+                    type: candidate.type,
+                    protocol: candidate.protocol,
+                    address: candidate.address,
+                    port: candidate.port,
+                    priority: candidate.priority,
+                    foundation: candidate.foundation
+                };
+                
+                console.log(`   📤 Serialized candidate data:`, JSON.stringify(candidateData, null, 2));
+                onIceCandidate(candidateData);
             } else {
                 console.log('❄️ ✅ ICE gathering COMPLETED - Total candidates sent:', iceCandidatesRef.current.localCandidates.length);
                 console.log('   Local candidates summary:');
@@ -320,7 +338,7 @@ export const useWebRTC = (callState, onOffer, onAnswer, onIceCandidate) => {
                 )
             ]);
             console.log('✅ Offer created');
-            
+
             // ============================================
             // STORE & DISPLAY OFFER SDP
             // ============================================
@@ -376,7 +394,7 @@ export const useWebRTC = (callState, onOffer, onAnswer, onIceCandidate) => {
                 )
             ]);
             console.log('✅ Offer set as remote description');
-            
+
             // ============================================
             // STORE RECEIVED OFFER SDP
             // ============================================
@@ -395,7 +413,7 @@ export const useWebRTC = (callState, onOffer, onAnswer, onIceCandidate) => {
                 )
             ]);
             console.log('✅ Answer created');
-            
+
             // ============================================
             // STORE & DISPLAY ANSWER SDP
             // ============================================
@@ -444,7 +462,7 @@ export const useWebRTC = (callState, onOffer, onAnswer, onIceCandidate) => {
                 )
             ]);
             console.log('✅ Answer set as remote description');
-            
+
             // ============================================
             // STORE RECEIVED ANSWER SDP
             // ============================================
@@ -453,7 +471,7 @@ export const useWebRTC = (callState, onOffer, onAnswer, onIceCandidate) => {
             console.log('================================');
             console.log(answer.sdp);
             console.log('================================');
-            
+
             // ============================================
             // SDP SUMMARY - CONNECTION ESTABLISHED
             // ============================================
@@ -480,21 +498,32 @@ export const useWebRTC = (callState, onOffer, onAnswer, onIceCandidate) => {
         }
 
         try {
+            // ⚠️ CRITICAL FIX: Reconstruct proper RTCIceCandidate from received data
+            // The candidate object is serialized data, not a RTCIceCandidate instance
             const candidateType = candidate.type || 'unknown';
             console.log(`❄️ Received ICE candidate from remote:`);
             console.log(`   Type: ${candidateType}`);
             console.log(`   Protocol: ${candidate.protocol}`);
             console.log(`   Address: ${candidate.address}:${candidate.port}`);
             console.log(`   Priority: ${candidate.priority}`);
-            
+            console.log(`   Full data:`, JSON.stringify(candidate, null, 2));
+
+            // ✅ Create proper RTCIceCandidate from received data
+            const rtcCandidate = new RTCIceCandidate({
+                candidate: candidate.candidate,
+                sdpMLineIndex: candidate.sdpMLineIndex,
+                sdpMid: candidate.sdpMid,
+                usernameFragment: candidate.usernameFragment
+            });
+
             // ✅ TRACK: Store received candidates
             iceCandidatesRef.current.remoteCandidates.push({
                 candidate: candidate,
                 timestamp: Date.now(),
                 type: candidateType
             });
-            
-            const addPromise = peerConnectionRef.current.addIceCandidate(new RTCIceCandidate(candidate));
+
+            const addPromise = peerConnectionRef.current.addIceCandidate(rtcCandidate);
             await Promise.race([
                 addPromise,
                 new Promise((_, reject) =>
@@ -502,9 +531,9 @@ export const useWebRTC = (callState, onOffer, onAnswer, onIceCandidate) => {
                 )
             ]);
             console.log(`✅ ICE candidate ADDED (Total remote: ${iceCandidatesRef.current.remoteCandidates.length})`);
-            
+
             // ✅ SUMMARY: When we have 2 candidates from each side, show summary
-            if (iceCandidatesRef.current.localCandidates.length >= 2 && 
+            if (iceCandidatesRef.current.localCandidates.length >= 2 &&
                 iceCandidatesRef.current.remoteCandidates.length >= 2) {
                 console.log('❄️ ============= ICE CANDIDATES COMPLETE ==============');
                 console.log(`   Local candidates sent: ${iceCandidatesRef.current.localCandidates.length}`);
@@ -531,7 +560,7 @@ export const useWebRTC = (callState, onOffer, onAnswer, onIceCandidate) => {
         remoteStreamSetRef.current = false;
         retryCountRef.current = 0;
         setupAbortedRef.current = false;
-        
+
         // Reset SDP and ICE storage
         sdpStorageRef.current = {
             localOffer: null,
@@ -545,7 +574,7 @@ export const useWebRTC = (callState, onOffer, onAnswer, onIceCandidate) => {
             selectedLocal: null,
             selectedRemote: null
         };
-        
+
         console.log('✅ All refs reset (including SDP & ICE storage)');
     };
 
