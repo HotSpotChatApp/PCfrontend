@@ -256,7 +256,7 @@ export const useWebRTC = (callState, onOffer, onAnswer, onIceCandidate) => {
                 });
 
                 console.log(`   ✅ ACCEPTED: Sending to remote peer (Total local: ${iceCandidatesRef.current.localCandidates.length})`);
-                
+
                 // ⚠️ CRITICAL FIX: Serialize RTCIceCandidate properly for Socket.IO transmission
                 // RTCIceCandidate is not a plain object, so we need to convert it to JSON
                 const candidateData = {
@@ -272,7 +272,7 @@ export const useWebRTC = (callState, onOffer, onAnswer, onIceCandidate) => {
                     priority: candidate.priority,
                     foundation: candidate.foundation
                 };
-                
+
                 console.log(`   📤 Serialized candidate data:`, JSON.stringify(candidateData, null, 2));
                 onIceCandidate(candidateData);
             } else {
