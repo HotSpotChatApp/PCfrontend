@@ -18,33 +18,40 @@ const ICE_SERVERS = {
         { urls: ['stun:stun.stunprotocol.org:3478'] },
 
         // ============================================
-        // TURN SERVER (Critical for Global Connectivity!)
+        // TURN SERVERS (Critical for Global Connectivity!)
         // ============================================
-        // Option 1: Use Free TURN Server (Limited, but works for testing)
+        // Primary TURN: relay.metered.ca (Free, public)
         {
-            urls: ['turn:relay.metered.ca:80?transport=udp'],
+            urls: ['turn:relay.metered.ca:80?transport=udp', 'turn:relay.metered.ca:80?transport=tcp'],
             username: 'openrelayproject',
-            credential: 'openrelayproject'
+            credential: 'openrelayproject',
+            credentialType: 'password'
         },
         {
             urls: ['turn:relay.metered.ca:443?transport=tcp'],
             username: 'openrelayproject',
-            credential: 'openrelayproject'
+            credential: 'openrelayproject',
+            credentialType: 'password'
         },
 
-        // Option 2: Self-Hosted TURN Server (recommended for production)
-        // Uncomment and replace YOUR_TURN_SERVER_IP with your Coturn server
-        /*
+        // Secondary TURN: coturn.example.com (backup)
         {
-            urls: ['turn:YOUR_TURN_SERVER_IP:3478', 'turn:YOUR_TURN_SERVER_IP:3479'],
-            username: 'your_username',
-            credential: 'your_password',
+            urls: ['turn:numb.viagee.com:3478?transport=udp', 'turn:numb.viagee.com:3478?transport=tcp'],
+            username: 'webrtcuser',
+            credential: 'webrtcpass',
+            credentialType: 'password'
+        },
+        
+        // Tertiary TURN: openrelay.metered.ca (alternative)
+        {
+            urls: ['turn:openrelay.metered.ca:80', 'turn:openrelay.metered.ca:443'],
+            username: 'openrelayproject',
+            credential: 'openrelayproject',
             credentialType: 'password'
         }
-        */
     ],
     // Settings for better connectivity
-    iceCandidatePoolSize: 10,  // Gather candidates
+    iceCandidatePoolSize: 20,  // Gather more candidates
     bundlePolicy: 'max-bundle', // All media types on one connection
     rtcpMuxPolicy: 'require'    // Mux RTCP with RTP
 };
@@ -433,6 +440,9 @@ export const useWebRTC = (callState, onOffer, onAnswer, onIceCandidate) => {
             ]);
             console.log('✅ Answer set as local description');
 
+            // ✅ NOW process any queued ICE candidates
+            await processQueuedCandidates();
+
             console.log('📤 Emitting answer to remote peer');
             onAnswer(answer);
         } catch (error) {
@@ -480,6 +490,9 @@ export const useWebRTC = (callState, onOffer, onAnswer, onIceCandidate) => {
             console.log('📋 REMOTE ANSWER:', sdpStorageRef.current.remoteAnswer ? 'RECEIVED ✅' : 'NOT RECEIVED ❌');
             console.log('🔗 Both SDPs now exchanged - WebRTC connection establishing...');
             console.log('===============================================================');
+
+            // ✅ NOW process any queued ICE candidates
+            await processQueuedCandidates();
         } catch (error) {
             console.error('❌ Error handling answer:', error);
             setConnectionError(`Failed to handle answer: ${error.message}`);
@@ -487,6 +500,36 @@ export const useWebRTC = (callState, onOffer, onAnswer, onIceCandidate) => {
     };
 
     // Add ICE candidate with timeout and error handling
+    // ✅ HELPER: Parse ICE candidate string to extract type, address, port
+    const parseCandidateString = (candidateStr) => {
+        // Example: "candidate:842 1 udp 2122129151 10.45.191.251 55012 typ host ufrag uMfh pwd..."
+        const parts = candidateStr.split(' ');
+        
+        let type = 'unknown';
+        let address = 'unknown';
+        let port = 'unknown';
+        let protocol = 'unknown';
+        
+        // Find 'typ' keyword and extract type
+        const typIndex = parts.indexOf('typ');
+        if (typIndex !== -1 && typIndex + 1 < parts.length) {
+            type = parts[typIndex + 1]; // host, srflx, relay, prflx
+        }
+        
+        // Protocol is at index 2 (1-indexed from candidate:...)
+        if (parts.length > 2) {
+            protocol = parts[2].toLowerCase(); // udp or tcp
+        }
+        
+        // Address is at index 4 and port at index 5
+        if (parts.length > 5) {
+            address = parts[4];
+            port = parts[5];
+        }
+        
+        return { type, protocol, address, port };
+    };
+
     const addIceCandidate = async (candidate) => {
         if (!peerConnectionRef.current) {
             console.warn('⚠️ Peer connection not ready for ICE candidate');
@@ -498,15 +541,27 @@ export const useWebRTC = (callState, onOffer, onAnswer, onIceCandidate) => {
         }
 
         try {
-            // ⚠️ CRITICAL FIX: Reconstruct proper RTCIceCandidate from received data
-            // The candidate object is serialized data, not a RTCIceCandidate instance
-            const candidateType = candidate.type || 'unknown';
+            // ✅ PARSE the candidate string to get type, address, port
+            const parsed = parseCandidateString(candidate.candidate);
+            
             console.log(`❄️ Received ICE candidate from remote:`);
-            console.log(`   Type: ${candidateType}`);
-            console.log(`   Protocol: ${candidate.protocol}`);
-            console.log(`   Address: ${candidate.address}:${candidate.port}`);
-            console.log(`   Priority: ${candidate.priority}`);
-            console.log(`   Full data:`, JSON.stringify(candidate, null, 2));
+            console.log(`   Type: ${parsed.type}`);
+            console.log(`   Protocol: ${parsed.protocol}`);
+            console.log(`   Address: ${parsed.address}:${parsed.port}`);
+            console.log(`   Candidate string: ${candidate.candidate}`);
+
+            // ✅ Check if remote description is set BEFORE adding candidate
+            if (!peerConnectionRef.current.remoteDescription) {
+                console.warn('⏳ Remote description not ready yet, queuing candidate...');
+                // Store candidate to add later
+                iceCandidatesRef.current.remoteCandidates.push({
+                    candidate: candidate,
+                    timestamp: Date.now(),
+                    type: parsed.type,
+                    queued: true
+                });
+                return;
+            }
 
             // ✅ Create proper RTCIceCandidate from received data
             const rtcCandidate = new RTCIceCandidate({
@@ -520,7 +575,8 @@ export const useWebRTC = (callState, onOffer, onAnswer, onIceCandidate) => {
             iceCandidatesRef.current.remoteCandidates.push({
                 candidate: candidate,
                 timestamp: Date.now(),
-                type: candidateType
+                type: parsed.type,
+                queued: false
             });
 
             const addPromise = peerConnectionRef.current.addIceCandidate(rtcCandidate);
@@ -531,25 +587,36 @@ export const useWebRTC = (callState, onOffer, onAnswer, onIceCandidate) => {
                 )
             ]);
             console.log(`✅ ICE candidate ADDED (Total remote: ${iceCandidatesRef.current.remoteCandidates.length})`);
-
-            // ✅ SUMMARY: When we have 2 candidates from each side, show summary
-            if (iceCandidatesRef.current.localCandidates.length >= 2 &&
-                iceCandidatesRef.current.remoteCandidates.length >= 2) {
-                console.log('❄️ ============= ICE CANDIDATES COMPLETE ==============');
-                console.log(`   Local candidates sent: ${iceCandidatesRef.current.localCandidates.length}`);
-                iceCandidatesRef.current.localCandidates.forEach((c, i) => {
-                    console.log(`     ${i + 1}. ${c.type} - ${c.candidate.address}:${c.candidate.port}`);
-                });
-                console.log(`   Remote candidates received: ${iceCandidatesRef.current.remoteCandidates.length}`);
-                iceCandidatesRef.current.remoteCandidates.forEach((c, i) => {
-                    console.log(`     ${i + 1}. ${c.type} - ${c.candidate.address}:${c.candidate.port}`);
-                });
-                console.log('=====================================================');
-            }
         } catch (error) {
             // Some ICE candidates might fail, but that's often okay
             console.warn('⚠️ Error adding ICE candidate (may be normal):', error.message);
         }
+    };
+
+    // ✅ NEW: Process queued ICE candidates after remote description is set
+    const processQueuedCandidates = async () => {
+        console.log('🔄 Processing queued ICE candidates...');
+        const queued = iceCandidatesRef.current.remoteCandidates.filter(c => c.queued);
+        console.log(`   Found ${queued.length} queued candidates`);
+        
+        for (const item of queued) {
+            const candidate = item.candidate;
+            try {
+                const rtcCandidate = new RTCIceCandidate({
+                    candidate: candidate.candidate,
+                    sdpMLineIndex: candidate.sdpMLineIndex,
+                    sdpMid: candidate.sdpMid,
+                    usernameFragment: candidate.usernameFragment
+                });
+                
+                await peerConnectionRef.current.addIceCandidate(rtcCandidate);
+                item.queued = false;
+                console.log(`   ✅ Added queued candidate (${item.type})`);
+            } catch (error) {
+                console.warn(`   ⚠️ Error adding queued candidate: ${error.message}`);
+            }
+        }
+        console.log('✅ Queued candidates processed');
     };
 
     // Reset refs after cleanup
